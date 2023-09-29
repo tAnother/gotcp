@@ -1,0 +1,15 @@
+*~
+\#*#
+.\#*
+
+*.o
+
+*.lnx
+
+.DS_Store
+
+/host
+/router
+/vhost
+/vrouter
+**/target
