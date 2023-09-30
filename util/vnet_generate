@@ -23,6 +23,9 @@ NETWORK_PREFIX_FMT = "10.{}.0.0/24"
 SESSION_PREFIX = "vnet-"
 START_SHELL = "/bin/bash"
 
+VHOST_BINARY_NAME = "vhost"
+VROUTER_BINARY_NAME = "vrouter"
+
 
 class PortAllocator():
 
@@ -111,7 +114,6 @@ class Node():
             if iface.network == target:
                 return iface.addr, iface.udp_addr
 
-        import pdb; pdb.set_trace()
         raise ValueError("No matching interface found")
 
     def get_neighbor_router_ips(self) -> list[IPv4Address]:
@@ -165,17 +167,16 @@ class Node():
             if self.node_type == NODE_TYPE_ROUTER:
                 fd.write("routing rip\n\n")
 
-                prefixes = [i.prefix() for i in self.interfaces.values() \
-                            if i.network.should_advertise(self)]
-                #import pdb; pdb.set_trace()
+                # prefixes = [i.prefix() for i in self.interfaces.values() \
+                #             if i.network.should_advertise(self)]
+
+                # if len(prefixes) > 0:
+                #     fd.write("# Prefixes this router should advertise\n")
+                #     for p in prefixes:
+                #         fd.write(f"rip originate prefix {p}\n")
+
+                #     fd.write("\n")
                 neighbor_router_ips = self.get_neighbor_router_ips()
-
-                if len(prefixes) > 0:
-                    fd.write("# Prefixes this router should advertise\n")
-                    for p in prefixes:
-                        fd.write(f"rip originate prefix {p}\n")
-
-                    fd.write("\n")
 
                 if len(neighbor_router_ips) > 0:
                     fd.write("# Neighbor routers that should be sent RIP messages\n")
@@ -184,7 +185,6 @@ class Node():
             elif self.node_type == NODE_TYPE_HOST:
                 routers = self.get_neighboring_routers()
                 if len(routers) == 0:
-                    import pdb; pdb.set_trace()
                     raise ValueError(f"No neighboring router found for host {self.name}")
                 elif len(routers) > 1:
                     print(f"Warning:  multiple routers found for host {self.name}, selecting one")
@@ -193,7 +193,6 @@ class Node():
                 fd.write("# Default route\n")
                 fd.write("route 0.0.0.0/0 via {}\n".format(default_ip))
             else:
-                import pdb; pdb.set_trace()
                 raise ValueError("Invalid node type")
 
     def __eq__(self, other: 'Node'):
@@ -250,9 +249,9 @@ class NetConfig():
         binary_paths = {}
         for node in self.nodes:
             binary_paths[node.name] = {
-                "binary_path": "./host" \
+                "binary_path": f"./{VHOST_BINARY_NAME}" \
                 if node.node_type == NODE_TYPE_HOST else
-                "./router" if node.node_type == NODE_TYPE_ROUTER
+                f"./{VROUTER_BINARY_NAME}" if node.node_type == NODE_TYPE_ROUTER
                 else "<path to binary>"
             }
 
@@ -301,19 +300,6 @@ def write_json(d, target_file):
 
 def main(input_args):
     parser = argparse.ArgumentParser()
-    # subparsers = parser.add_subparsers(dest="command")
-
-    # commands = [
-    #     "generate",
-    #     "run",
-    # ]
-
-    # sp_cmds = {c: subparsers.add_parser(c) for c in commands}
-    # sp_cmds["generate"].add_argument("net_json_file")
-    # sp_cmds["generate"].add_argument("output_dir")
-    # sp_cmds["run"].add_argument("--router", type=str)
-    # sp_cmds["run"].add_argument("--host", type=str)
-    # sp_cmds["run"].add_argument("net_file_dir")
 
     parser.add_argument("net_json_file")
     parser.add_argument("output_dir")
