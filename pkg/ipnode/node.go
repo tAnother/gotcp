@@ -1,6 +1,7 @@
 package ipnode
 
 import (
+	"fmt"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"net/netip"
 	"sync"
@@ -10,10 +11,12 @@ type Node struct {
 	Interfaces     map[string]*Interface          // interface name -> interface instance
 	IFNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
-	RoutingTableMu *sync.Mutex
+	RoutingTableMu *sync.RWMutex
 
 	RecvHandlers   map[int]RecvHandlerFunc
-	RecvHandlersMu *sync.Mutex
+	RecvHandlersMu *sync.RWMutex
+	IFNeighborsMu  *sync.RWMutex
+	InterfacesMu   *sync.RWMutex
 }
 
 type Neighbor struct {
@@ -71,12 +74,87 @@ func findNextHop(destIP netip.Addr) {
 
 // turn up/turn down an interface:
 // 1. Update interface info
-// 2. Update the routing table
-// (3. For routers: Notify rip neighbors)
-func (n *Node) SetInterfaceIsDown(ifname string, down bool) {
+// (2. For routers: Notify rip neighbors)
+func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
+	n.InterfacesMu.RLock()
+	defer n.InterfacesMu.RUnlock()
 
+	iface, ok := n.Interfaces[ifname]
+	if !ok {
+		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist\n", ifname)
+	}
+	iface.SetInterfaceIsDown(down)
+	return nil
 }
 
 func updateRoutingtable() { // params TBD
 
+}
+
+func (n *Neighbor) GetVIPString() string {
+	return n.VIP.String()
+}
+
+func (n *Neighbor) GetUDPString() string {
+	return n.UDPAddr.Addr().String()
+}
+
+func (i *Interface) GetIsDownString() string {
+	if i.IsDown {
+		return "down"
+	}
+	return "up"
+}
+
+func (i *Interface) GetPrefixString() string {
+	return i.AssignedPrefix.String()
+}
+
+func (i *Interface) SetInterfaceIsDown(isDown bool) {
+	i.IsDown = isDown
+}
+
+// Returns a string list of interface, vip of neighbor, udp of neighbor
+func (n *Node) GetNeighborsString() [][]string {
+	n.IFNeighborsMu.RLock()
+	defer n.IFNeighborsMu.RUnlock()
+	neighbors := n.IFNeighbors
+
+	rowSize := 0
+	for _, val := range neighbors {
+		rowSize += len(val)
+	}
+
+	res := make([][]string, rowSize)
+	rowIndex := 0
+	for key, val := range neighbors {
+		nbhrSize := len(val)
+		for i := 0; i < nbhrSize; i++ {
+			row := []string{key, val[i].GetVIPString(), val[i].GetUDPString()}
+			res[rowIndex] = row
+			rowIndex += 1
+		}
+	}
+
+	return res
+}
+
+// Returns a string list of interface
+func (n *Node) GetInterfacesString() [][]string {
+	n.InterfacesMu.RLock()
+	defer n.InterfacesMu.RUnlock()
+	interfaces := n.Interfaces
+	size := len(interfaces)
+	res := make([][]string, size)
+	index := 0
+	for key, val := range interfaces {
+		res[index] = []string{key, val.GetPrefixString(), val.GetIsDownString()}
+		index += 1
+	}
+	return res
+}
+
+func (n *Node) GetRoutingTableString() [][]string {
+	n.RoutingTableMu.RLock()
+	defer n.RoutingTableMu.RUnlock()
 }
