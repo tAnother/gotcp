@@ -37,7 +37,7 @@ type Interface struct {
 type RoutingEntry struct {
 	RouteType    uint16
 	NextHop      netip.Addr // nil if local
-	LocalNextHop string     // interface name. nil if not local
+	LocalNextHop string     // interface name. "" if not local
 	Cost         uint16
 }
 
@@ -114,20 +114,41 @@ func (i *Interface) SetInterfaceIsDown(isDown bool) {
 	i.IsDown = isDown
 }
 
+func (rt *RoutingEntry) GetRouteTypeString() string {
+	switch rt.RouteType {
+	case 0:
+		return "S"
+	case 1:
+		return "L"
+	default:
+		return "R"
+	}
+}
+
+func (rt *RoutingEntry) GetNextHopString() string {
+	if rt.LocalNextHop != "" {
+		return fmt.Sprintf("LOCAL:%s", rt.NextHop.String())
+	}
+	return rt.NextHop.String()
+}
+
+func (rt *RoutingEntry) GetCostString() string {
+	return fmt.Sprint(rt.Cost)
+}
+
 // Returns a string list of interface, vip of neighbor, udp of neighbor
 func (n *Node) GetNeighborsString() [][]string {
 	n.IFNeighborsMu.RLock()
 	defer n.IFNeighborsMu.RUnlock()
-	neighbors := n.IFNeighbors
 
 	rowSize := 0
-	for _, val := range neighbors {
+	for _, val := range n.IFNeighbors {
 		rowSize += len(val)
 	}
 
 	res := make([][]string, rowSize)
 	rowIndex := 0
-	for key, val := range neighbors {
+	for key, val := range n.IFNeighbors {
 		nbhrSize := len(val)
 		for i := 0; i < nbhrSize; i++ {
 			row := []string{key, val[i].GetVIPString(), val[i].GetUDPString()}
@@ -143,11 +164,10 @@ func (n *Node) GetNeighborsString() [][]string {
 func (n *Node) GetInterfacesString() [][]string {
 	n.InterfacesMu.RLock()
 	defer n.InterfacesMu.RUnlock()
-	interfaces := n.Interfaces
-	size := len(interfaces)
+	size := len(n.Interfaces)
 	res := make([][]string, size)
 	index := 0
-	for key, val := range interfaces {
+	for key, val := range n.Interfaces {
 		res[index] = []string{key, val.GetPrefixString(), val.GetIsDownString()}
 		index += 1
 	}
@@ -157,4 +177,12 @@ func (n *Node) GetInterfacesString() [][]string {
 func (n *Node) GetRoutingTableString() [][]string {
 	n.RoutingTableMu.RLock()
 	defer n.RoutingTableMu.RUnlock()
+	size := len(n.RoutingTable)
+	res := make([][]string, size)
+	index := 0
+	for prefix, rt := range n.RoutingTable {
+		res[index] = []string{rt.GetRouteTypeString(), prefix.String(), rt.GetNextHopString(), rt.GetCostString()}
+		index += 1
+	}
+	return res
 }
