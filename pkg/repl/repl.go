@@ -107,7 +107,7 @@ func lnHandler(input string, replConfig *REPLConfig) error {
 	writer := replConfig.writer
 
 	bytes, err := io.WriteString(writer, "Iface          VIP          UDPAddr\n")
-	log.Printf("[lnHandler] writes %s bytes", bytes)
+	log.Printf("[lnHandler] writes %d bytes", bytes)
 	if err != nil {
 		return fmt.Errorf("lnHandler cannot write the header to stdout.\n")
 	}
@@ -115,7 +115,7 @@ func lnHandler(input string, replConfig *REPLConfig) error {
 	for i := 0; i < rowSize; i++ {
 		row := neighbors[i]
 		bytes, err := io.WriteString(writer, fmt.Sprintf("%s     %s   %s\n", row[0], row[1], row[2]))
-		log.Printf("[lnHandler] writes %s bytes", bytes)
+		log.Printf("[lnHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("lnHandler cannot write neighors to stdout.\n")
 		}
@@ -132,7 +132,7 @@ func liHandler(input string, replConfig *REPLConfig) error {
 
 	writer := replConfig.writer
 	bytes, err := io.WriteString(writer, "Name  Addr/Prefix State\n")
-	log.Printf("[liHandler] writes %s bytes", bytes)
+	log.Printf("[liHandler] writes %d bytes", bytes)
 	if err != nil {
 		return fmt.Errorf("liHandler cannot write the header to stdout.\n")
 	}
@@ -140,7 +140,7 @@ func liHandler(input string, replConfig *REPLConfig) error {
 	for i := 0; i < len(interfaces); i++ {
 		row := interfaces[i]
 		bytes, err := io.WriteString(writer, fmt.Sprintf("%s     %s   %s\n", row[0], row[1], row[2]))
-		log.Printf("[liHandler] writes %s bytes", bytes)
+		log.Printf("[liHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("liHandler cannot write interfaces to stdout.\n")
 		}
@@ -154,6 +154,23 @@ func lrHandler(input string, replConfig *REPLConfig) error {
 		return fmt.Errorf("usage: lr")
 	}
 
+	routingTable := replConfig.node.GetRoutingTableString()
+	writer := replConfig.writer
+	bytes, err := io.WriteString(writer, "T       Prefix   Next hop   Cost\n")
+	log.Printf("[lrHandler] writes %d bytes", bytes)
+	if err != nil {
+		return fmt.Errorf("lrHandler cannot write the header to stdout.\n")
+	}
+
+	for i := 0; i < len(routingTable); i++ {
+		row := routingTable[i]
+		bytes, err := io.WriteString(writer, fmt.Sprintf("%s  %s   %s     %s\n", row[0], row[1], row[2], row[3]))
+		log.Printf("[lrHandler] writes %d bytes", bytes)
+		if err != nil {
+			return fmt.Errorf("lrHandler cannot write routing table to stdout.\n")
+		}
+	}
+	return nil
 }
 
 func upHandler(input string, replConfig *REPLConfig) error {
@@ -189,5 +206,5 @@ func sendHandler(input string, replConfig *REPLConfig) error {
 	if len(args) != 3 {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
 	}
-
+	return nil
 }
