@@ -141,9 +141,9 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint16) error {
 	// Send the message to the "link-layer" addr:port on UDP
 	bytesWritten, err := srcUDPConn.WriteToUDP(bytesToSend, remoteAddr)
 	if err != nil {
-		log.Panicln("Error writing to socket: ", err)
+		return fmt.Errorf("error writing to socket: %v", err)
 	}
-	fmt.Printf("Sent %d bytes\n", bytesWritten)
+	log.Printf("Sent %d bytes from %v to %v \n", bytesWritten, srcIP, destIP)
 	return nil
 }
 
