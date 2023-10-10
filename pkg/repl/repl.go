@@ -7,6 +7,7 @@ import (
 	"io"
 	"iptcp-nora-yu/pkg/ipnode"
 	"log"
+	"net/netip"
 	"os"
 	"strings"
 )
@@ -70,7 +71,7 @@ func (r *REPL) Run(node *ipnode.Node) {
 	}, "Sets the interface's state to down. usage: down")
 	r.AddCommand("send", func(s string, r *REPLConfig) error {
 		return sendHandler(s, replConfig)
-	}, "Sends the messgae to the ip address. usage: send")
+	}, "Sends the messgae to the dest ip address. usage: send")
 
 	// begin the repl
 	io.WriteString(writer, ">") // the prompt
@@ -205,6 +206,10 @@ func sendHandler(input string, replConfig *REPLConfig) error {
 	args := strings.Split(input, " ")
 	if len(args) != 3 {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
+	}
+	err := replConfig.node.Send(netip.MustParseAddr(args[1]), args[2], 0)
+	if err != nil {
+		return err
 	}
 	return nil
 }
