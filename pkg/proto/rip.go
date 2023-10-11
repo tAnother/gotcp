@@ -6,7 +6,7 @@ const (
 	RoutingCmdTypeRequest  RoutingCmdType = 1 // for request of routing info
 	RoutingCmdTypeResponse RoutingCmdType = 2
 
-	MaxCost uint32 = 16
+	INFINITY uint32 = 16
 )
 
 type ripEntry struct {

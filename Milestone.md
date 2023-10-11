@@ -90,6 +90,8 @@ type Node struct {
 
     RecvHandlers    map[int]HandlerFunc
     RecvHandlersMu  *sync.mutex
+    IFNeighborsMu *sync.RWMutex
+    InterfacesMu  *sync.RWMutex
 }
 
 ```
@@ -115,6 +117,7 @@ type Interface struct {
     SubnetMask      uint32
     UDPAddr         netip.AddrPort
     IsDown          bool
+    Conn           *net.UDPConn
 }
 
 type RoutingEntry struct{
@@ -327,3 +330,78 @@ func sendHandler(input string, replConfig *REPLConfig)
         - handle this case in Phase 2
 
 ### Phase 2: RIP
+
+1. Send Update
+```Go
+// Sends periodic RIP updates to the neighbors every 5 sec
+func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
+   // 1. sendRipReqeust
+   node.senRipRequest()
+   // 2. sendUpdateToNeighbors on startup
+   node.sendUpdateToNeighbors()
+   // 3. Periodic sendUpdateToNeighbors
+   ticker := time.NewTicker(util.RIP_COOLDOWN)
+   defer ticker.Stop()
+   for {
+        select{
+            case <- ticker.C:
+                node.sendUpdateToNeighbors()
+        }
+    }
+} 
+
+func (n *Node) sendRipRequest(){
+   // for each interface of the router
+        // Marshal RIP msg to []bytes
+        // Wrap it into Packet
+        // Send the packet to the interface UDP?
+}
+
+func (n *Node) sendUpdateToNeighbors(){
+    // 1. get rip data from the node
+    // 2. for each interface f of the router
+            // 2.1. for each rip entry, update the cost using split horizon and poison reverse
+                // If rip entry and the interface f belongs to the same subnet and the cost is not 0
+                // It means this node does not have better knowledge about interface f than the neighboring node. So we should set the ripEntry cost to infinity 
+        // 3. Marshal the ripMsg
+        // 4. Wrap it to the packet
+        // 5. Send the packet to the interface UDP
+}
+
+//should be triggered whenever a interface's state is chanegd
+func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be similar to sendUpdateToNeighbors. 
+```
+
+2. Expire routing entry
+
+    We should another field for `RoutingEntry`  (maybe `LastRefreshTime time.Time`). If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
+
+3. Send RIP packet
+
+    If the packet is not for this node: `packet.Header.Dst != interface.AssignedIP`
+    -  Decrement TTL
+    - If TTL  == 0, drop the packet
+    - Recompute the checksum
+    - Forward the packet to the `routingEntry.nextHop` according to `n.Routingtable`
+    
+
+4. Receive RIP packet
+
+    - Fetch `func ripPacketHandler` from `n.RecvHandlers`
+        - Trigger `ripPacketHandler()`
+            - Unmarshall
+            - Validation
+            - For each ripEntry, log to stdout: `Received rip packet: Src: {src}, Dst: {dest}, TTL:{TTL}, Data:{msg}, Cost :{cost}`
+            - If Request Command: send out?
+            - If Response Command: update the routing table
+
+            ```Go
+            func updateRoutingtable(ripEntries []ripEntry) { // params TBD
+                //For each ripEntry
+                    // 1. Convert to RoutingEntry
+                    // let c = ripEntry.cost + 1
+                    // 2. If the routingEntry not in the routing table and c < inifinity, add it to the table
+                    // 3. If we have an existing RoutingEntry
+                        // refer to Distance Vector Routing
+            }
+            ```
