@@ -204,10 +204,11 @@ func downHandler(input string, replConfig *REPLConfig) error {
 
 func sendHandler(input string, replConfig *REPLConfig) error {
 	args := strings.Split(input, " ")
-	if len(args) != 3 {
+	if len(args) < 3 {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
 	}
-	err := replConfig.node.Send(netip.MustParseAddr(args[1]), args[2], 0)
+	msg := strings.Join(args[2:], " ")
+	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, 0)
 	if err != nil {
 		return err
 	}

@@ -17,10 +17,9 @@ type Node struct {
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
 	RoutingTableMu *sync.RWMutex
 
-	RecvHandlers   map[int]RecvHandlerFunc
-	RecvHandlersMu *sync.RWMutex
-	IFNeighborsMu  *sync.RWMutex
-	InterfacesMu   *sync.RWMutex
+	RecvHandlers  map[int]RecvHandlerFunc
+	IFNeighborsMu *sync.RWMutex
+	InterfacesMu  *sync.RWMutex
 }
 
 type Neighbor struct {
@@ -54,14 +53,22 @@ func Init(config lnxconfig.IPConfig) (*Node, error) {
 }
 
 // listen on designated interface, receive & unmarshal packets, then forward them to specific handlers
-func (n *Node) ListenOn(udpPort uint16) {
+func (n *Node) ListenOn(udpPort uint16) {}
 
+type RecvHandlerFunc func(packet *proto.Packet) // params TBD
+
+func (n *Node) RegisterRecvHandler(protoNum int, callbackFunc RecvHandlerFunc) {
+	n.RecvHandlers[protoNum] = callbackFunc
 }
 
-type RecvHandlerFunc func() // params TBD
+func testRecvHandler(packet *proto.Packet) {
+	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+}
 
-func (n *Node) RegisterRecvHandler(protoNum uint16, callbackFunc RecvHandlerFunc) {
-
+func ripRecvHandler(packet *proto.Packet) {
+	fmt.Printf("Received rip packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
 }
 
 // send:
@@ -69,7 +76,7 @@ func (n *Node) RegisterRecvHandler(protoNum uint16, callbackFunc RecvHandlerFunc
 // 2. Recursively find next hop in the routing table
 // 3. Look up for the udp port in neighbor list
 // 4. Write to the dest UDP port
-func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint16) error {
+func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
 	var nextHop *RoutingEntry
 	var srcIP netip.Addr
 	var remoteAddr *net.UDPAddr
@@ -84,15 +91,15 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint16) error {
 		}
 		// find src interface
 		srcIF := n.findSrcIP(nextHop.LocalNextHop)
-		srcIP = srcIF.GetAssignedIP()
-		srcUDPConn = srcIF.GetUDPConn()
+		srcIP = srcIF.AssignedIP
+		srcUDPConn = srcIF.conn
 		// find the nbhr
 		nbhr := n.findNeighbor(nextHop.LocalNextHop, destIP)
 		if nbhr == nil {
 			return fmt.Errorf("dest ip does not exist in neighbors")
 		}
 		// resolve nbhrs udp addr
-		remoteAddr, err = util.RemotePort(nbhr.GetUDPAddr())
+		remoteAddr, err = util.RemotePort(nbhr.UDPAddr)
 		if err != nil {
 			return fmt.Errorf("error resolving the dest udp port")
 		}
@@ -100,43 +107,25 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint16) error {
 	case 200:
 		nextHop = nil //TODO for RIP
 	default:
-		nextHop = nil
+		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
 	// Start filling in the header
-
-	hdr := proto.IPv4Header{
-		Version:  4,
-		Len:      20, // Header length is always 20 when no IP options
-		TOS:      0,
-		TotalLen: proto.HeaderLen + len(msg),
-		ID:       0,
-		Flags:    0,
-		FragOff:  0,
-		TTL:      32,
-		Protocol: 0,
-		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      srcIP,
-		Dst:      destIP,
-		Options:  []byte{},
-	}
+	packet := proto.NewPacket(srcIP, destIP, []byte(msg), protoNum)
 
 	// Assemble the header into a byte array
-	headerBytes, err := hdr.Marshal()
+	headerBytes, err := packet.Header.Marshal()
 	if err != nil {
 		return fmt.Errorf("error marshalling header:  %s", err)
 	}
 
 	// Cast back to an int, which is what the Header structure expects
-	hdr.Checksum = int(proto.ComputeChecksum(headerBytes))
+	packet.Header.Checksum = int(proto.ComputeChecksum(headerBytes))
 
-	headerBytes, err = hdr.Marshal()
+	bytesToSend, err := packet.Marshal()
 	if err != nil {
-		return fmt.Errorf("error marshalling header: %s", err)
+		return fmt.Errorf("error marshalling packet: %s", err)
 	}
-	bytesToSend := make([]byte, 0, len(headerBytes)+len(msg))
-	bytesToSend = append(bytesToSend, headerBytes...)
-	bytesToSend = append(bytesToSend, []byte(msg)...)
 
 	// Send the message to the "link-layer" addr:port on UDP
 	bytesWritten, err := srcUDPConn.WriteToUDP(bytesToSend, remoteAddr)
@@ -163,8 +152,6 @@ func (n *Node) findNextHop(destIP netip.Addr) *RoutingEntry {
 		entry = n.RoutingTable[matchedPrefix]
 	}
 	return entry
-
-	// ------- Test Packet
 }
 
 func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
@@ -233,10 +220,6 @@ func (n *Neighbor) GetUDPPort() uint16 {
 	return n.UDPAddr.Port()
 }
 
-func (n *Neighbor) GetUDPAddr() netip.AddrPort {
-	return n.UDPAddr
-}
-
 // ------- Interface
 func (i *Interface) GetIsDownString() string {
 	if i.IsDown {
@@ -253,18 +236,7 @@ func (i *Interface) SetInterfaceIsDown(isDown bool) {
 	i.IsDown = isDown
 }
 
-func (i *Interface) GetAssignedIP() netip.Addr {
-	return i.AssignedIP
-}
-
-func (i *Interface) GetUDPConn() *net.UDPConn {
-	return i.conn
-}
-
 // ------- RoutingEntry
-func (rt *RoutingEntry) GetRouteTypeString() string {
-	return rt.RouteType
-}
 
 func (rt *RoutingEntry) GetNextHopString() string {
 	if rt.LocalNextHop != "" {
@@ -323,7 +295,7 @@ func (n *Node) GetRoutingTableString() [][]string {
 	res := make([][]string, size)
 	index := 0
 	for prefix, rt := range n.RoutingTable {
-		res[index] = []string{rt.GetRouteTypeString(), prefix.String(), rt.GetNextHopString(), rt.GetCostString()}
+		res[index] = []string{rt.RouteType, prefix.String(), rt.GetNextHopString(), rt.GetCostString()}
 		index += 1
 	}
 	return res
