@@ -145,7 +145,7 @@ func (h *IPv4Header) Parse(b []byte) error {
 	return nil
 }
 
-// ParseHeader parses b as an IPv4 header.
+// ParseHeader (Unmarshall) parses b as an IPv4 header.
 //
 // The provided b must be in the format used by a raw IP socket on the
 // local system.
@@ -156,12 +156,6 @@ func ParseHeader(b []byte) (*IPv4Header, error) {
 		return nil, err
 	}
 	return h, nil
-}
-
-// ---------- moved directly from github.com/brown-csci1680/iptcp-headers/blob/main/ipv4header.go
-
-func (h *IPv4Header) UnMarshal(b []byte) error {
-	return nil
 }
 
 // Compute the checksum using the netstack package
@@ -187,4 +181,22 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 
 func ValidateTTL() {
 
+}
+
+func NewHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum int) *IPv4Header {
+	return &IPv4Header{
+		Version:  4,
+		Len:      20, // Header length is always 20 when no IP options
+		TOS:      0,
+		TotalLen: HeaderLen + len(msg),
+		ID:       0,
+		Flags:    0,
+		FragOff:  0,
+		TTL:      32,
+		Protocol: protoNum,
+		Checksum: 0, // Should be 0 until checksum is computed
+		Src:      srcIP,
+		Dst:      destIP,
+		Options:  []byte{},
+	}
 }
