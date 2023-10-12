@@ -13,7 +13,7 @@ type Router struct {
 	RipNeighbors []netip.Addr
 }
 
-func NewRouter(config lnxconfig.IPConfig) (*Router, error) {
+func NewRouter(config *lnxconfig.IPConfig) (*Router, error) {
 	node, err := newNode(config)
 	if err != nil {
 		return nil, err

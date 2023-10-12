@@ -25,7 +25,9 @@ type REPLConfig struct {
 }
 
 func NewRepl() *REPL {
-	return &REPL{make(map[string]replHandlerFunc), make(map[string]string)}
+	r := &REPL{make(map[string]replHandlerFunc), make(map[string]string)}
+	r.addDefaultCommands()
+	return r
 }
 
 // Add a command, along with its help string, to the set of commands
@@ -52,8 +54,6 @@ func (r *REPL) Run(node *ipnode.Node) {
 	writer := os.Stdout
 	scanner := bufio.NewScanner((reader))
 	replConfig := &REPLConfig{writer: writer, node: node}
-
-	r.addDefaultCommands()
 
 	// begin the repl
 	io.WriteString(writer, ">") // the prompt

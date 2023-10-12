@@ -3,10 +3,12 @@ package proto
 import (
 	"fmt"
 	"net/netip"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 type Packet struct {
-	Header  *IPv4Header
+	Header  *ipv4header.IPv4Header
 	Payload []byte
 }
 

@@ -18,8 +18,8 @@ type Node struct {
 	RoutingTableMu *sync.RWMutex
 
 	RecvHandlers  map[int]RecvHandlerFunc
-	IFNeighborsMu *sync.RWMutex /// get rid of this since it should not be changed once initialized? (do we want to make our map interface/ifneighbors private, as we're providing functions to access those info as a string?)
-	InterfacesMu  *sync.RWMutex /// get rid of this since it should not be changed once initialized?
+	IFNeighborsMu *sync.RWMutex
+	InterfacesMu  *sync.RWMutex
 }
 
 type Neighbor struct {
@@ -54,7 +54,7 @@ type RoutingEntry struct {
 }
 
 // init a node instance & register handlers
-func newNode(config lnxconfig.IPConfig) (*Node, error) {
+func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 	node := &Node{
 		Interfaces:   make(map[string]*Interface),
 		IFNeighbors:  make(map[string][]*Neighbor),
