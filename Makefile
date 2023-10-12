@@ -1,6 +1,6 @@
 VHOST=vhost
 VROUTER=vrouter
-OUTPUT_DIR=programs
+OUTPUT_DIR=exec
 
 all:
 	go build -o ${OUTPUT_DIR}/${VHOST} ./cmd/${VHOST} 
