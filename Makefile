@@ -1,9 +1,10 @@
 VHOST=vhost
 VROUTER=vrouter
+OUTPUT_DIR=programs
 
 all:
-	go build ./cmd/${VHOST}
-	go build ./cmd/${VROUTER}
+	go build -o ${OUTPUT_DIR}/${VHOST} ./cmd/${VHOST} 
+	go build -o ${OUTPUT_DIR}/${VROUTER} ./cmd/${VROUTER} 
 
 clean:
-	rm -f ${VHOST} ${VROUTER}
+	rm -f ${OUTPUT_DIR}/${VHOST} ${OUTPUT_DIR}/${VROUTER}

@@ -22,5 +22,4 @@
 # directory to store generated network files
 networks/ 
 
-go.sum
-go.mod
+exec/

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/ipnode"
-	"log"
 	"net/netip"
 	"os"
 	"strings"
@@ -25,7 +24,9 @@ type REPLConfig struct {
 }
 
 func NewRepl() *REPL {
-	return &REPL{make(map[string]replHandlerFunc), make(map[string]string)}
+	r := &REPL{make(map[string]replHandlerFunc), make(map[string]string)}
+	r.addDefaultCommands()
+	return r
 }
 
 // Add a command, along with its help string, to the set of commands
@@ -53,26 +54,6 @@ func (r *REPL) Run(node *ipnode.Node) {
 	scanner := bufio.NewScanner((reader))
 	replConfig := &REPLConfig{writer: writer, node: node}
 
-	// add default commands here
-	r.AddCommand("ln", func(s string, r *REPLConfig) error {
-		return lnHandler(s, replConfig)
-	}, "Prints neighbors of the current node. usage: ln")
-	r.AddCommand("li", func(s string, r *REPLConfig) error {
-		return liHandler(s, replConfig)
-	}, "Prints all interfaces of the current node. usage: li")
-	r.AddCommand("lr", func(s string, r *REPLConfig) error {
-		return lrHandler(s, replConfig)
-	}, "Prints the routing table of the current node. usage: lr")
-	r.AddCommand("up", func(s string, r *REPLConfig) error {
-		return upHandler(s, replConfig)
-	}, "Sets the interface's state to up. usage: up")
-	r.AddCommand("down", func(s string, r *REPLConfig) error {
-		return downHandler(s, replConfig)
-	}, "Sets the interface's state to down. usage: down")
-	r.AddCommand("send", func(s string, r *REPLConfig) error {
-		return sendHandler(s, replConfig)
-	}, "Sends the messgae to the dest ip address. usage: send")
-
 	// begin the repl
 	io.WriteString(writer, ">") // the prompt
 	for scanner.Scan() {
@@ -97,26 +78,32 @@ func (r *REPL) Run(node *ipnode.Node) {
 	}
 }
 
-// ---------- some shared handler (might wanna move these elsewhere)
+func (r *REPL) addDefaultCommands() {
+	r.AddCommand("ln", lnHandler, "Prints neighbors of the current node. usage: ln")
+	r.AddCommand("li", liHandler, "Prints all interfaces of the current node. usage: li")
+	r.AddCommand("lr", lrHandler, "Prints the routing table of the current node. usage: lr")
+	r.AddCommand("up", upHandler, "Sets the interface's state to up. usage: up <interface name>")
+	r.AddCommand("down", downHandler, "Sets the interface's state to down. usage: down <interface name>")
+	r.AddCommand("send", sendHandler, "Sends the messgae to the dest ip address. usage: send <dest IP> <msg>")
+}
+
 func lnHandler(input string, replConfig *REPLConfig) error {
 	args := strings.Split(input, " ")
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ln")
 	}
 	neighbors := replConfig.node.GetNeighborsString()
-	rowSize := len(neighbors)
 	writer := replConfig.writer
 
-	bytes, err := io.WriteString(writer, "Iface          VIP          UDPAddr\n")
-	log.Printf("[lnHandler] writes %d bytes", bytes)
+	_, err := io.WriteString(writer, "Iface\tVIP\tUDPAddr\n")
+	// log.Printf("[lnHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lnHandler cannot write the header to stdout.\n")
 	}
 
-	for i := 0; i < rowSize; i++ {
-		row := neighbors[i]
-		bytes, err := io.WriteString(writer, fmt.Sprintf("%s     %s   %s\n", row[0], row[1], row[2]))
-		log.Printf("[lnHandler] writes %d bytes", bytes)
+	for _, neighborInfo := range neighbors {
+		_, err := io.WriteString(writer, neighborInfo)
+		// log.Printf("[lnHandler] writes %d bytes\n", bytes)
 		if err != nil {
 			return fmt.Errorf("lnHandler cannot write neighors to stdout.\n")
 		}
@@ -130,18 +117,17 @@ func liHandler(input string, replConfig *REPLConfig) error {
 		return fmt.Errorf("usage: li")
 	}
 	interfaces := replConfig.node.GetInterfacesString()
-
 	writer := replConfig.writer
-	bytes, err := io.WriteString(writer, "Name  Addr/Prefix State\n")
-	log.Printf("[liHandler] writes %d bytes", bytes)
+
+	_, err := io.WriteString(writer, "Name\tAddr/Prefix\tState\n")
+	// log.Printf("[liHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("liHandler cannot write the header to stdout.\n")
 	}
 
-	for i := 0; i < len(interfaces); i++ {
-		row := interfaces[i]
-		bytes, err := io.WriteString(writer, fmt.Sprintf("%s     %s   %s\n", row[0], row[1], row[2]))
-		log.Printf("[liHandler] writes %d bytes", bytes)
+	for _, interfaceInfo := range interfaces {
+		_, err := io.WriteString(writer, interfaceInfo)
+		// log.Printf("[liHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("liHandler cannot write interfaces to stdout.\n")
 		}
@@ -154,19 +140,18 @@ func lrHandler(input string, replConfig *REPLConfig) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: lr")
 	}
-
 	routingTable := replConfig.node.GetRoutingTableString()
 	writer := replConfig.writer
-	bytes, err := io.WriteString(writer, "T       Prefix   Next hop   Cost\n")
-	log.Printf("[lrHandler] writes %d bytes", bytes)
+
+	_, err := io.WriteString(writer, "T\tPrefix\tNext hop\tCost\n")
+	// log.Printf("[lrHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lrHandler cannot write the header to stdout.\n")
 	}
 
-	for i := 0; i < len(routingTable); i++ {
-		row := routingTable[i]
-		bytes, err := io.WriteString(writer, fmt.Sprintf("%s  %s   %s     %s\n", row[0], row[1], row[2], row[3]))
-		log.Printf("[lrHandler] writes %d bytes", bytes)
+	for _, rtInfo := range routingTable {
+		_, err := io.WriteString(writer, rtInfo)
+		// log.Printf("[lrHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("lrHandler cannot write routing table to stdout.\n")
 		}

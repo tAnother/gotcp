@@ -38,40 +38,92 @@ type Interface struct {
 	conn           *net.UDPConn
 }
 
+type RouteType string
+
+const (
+	Local  RouteType = "L"
+	Static RouteType = "S"
+	RIP    RouteType = "R"
+)
+
 type RoutingEntry struct {
-	RouteType    string
+	RouteType    RouteType
 	NextHop      netip.Addr // nil if local
 	LocalNextHop string     // interface name. "" if not local
-	Cost         uint16
+	Cost         int16
 }
 
-// ------------ IP API ------------
-//
 // init a node instance & register handlers
-func Init(config lnxconfig.IPConfig) (*Node, error) {
-	return nil, nil
+func newNode(config *lnxconfig.IPConfig) (*Node, error) {
+	node := &Node{
+		Interfaces:     make(map[string]*Interface),
+		IFNeighbors:    make(map[string][]*Neighbor),
+		RoutingTable:   make(map[netip.Prefix]*RoutingEntry),
+		RecvHandlers:   make(map[int]RecvHandlerFunc),
+		IFNeighborsMu:  &sync.RWMutex{},
+		InterfacesMu:   &sync.RWMutex{},
+		RoutingTableMu: &sync.RWMutex{},
+	}
+
+	for _, ifcfg := range config.Interfaces {
+		node.Interfaces[ifcfg.Name] = &Interface{
+			Name:           ifcfg.Name,
+			AssignedIP:     ifcfg.AssignedIP,
+			AssignedPrefix: ifcfg.AssignedPrefix,
+			SubnetMask:     uint32(ifcfg.AssignedPrefix.Bits()),
+			UDPAddr:        ifcfg.UDPAddr,
+		}
+
+		node.IFNeighbors[ifcfg.Name] = make([]*Neighbor, 0)
+
+		node.RoutingTable[ifcfg.AssignedPrefix] = &RoutingEntry{
+			RouteType:    Local,
+			LocalNextHop: ifcfg.Name,
+			Cost:         0,
+		}
+	}
+
+	for _, ncfg := range config.Neighbors {
+		neighbor := &Neighbor{
+			VIP:     ncfg.DestAddr,
+			UDPAddr: ncfg.UDPAddr,
+			IFName:  ncfg.InterfaceName,
+		}
+		node.IFNeighbors[ncfg.InterfaceName] = append(node.IFNeighbors[ncfg.InterfaceName], neighbor)
+	}
+
+	for prefix, addr := range config.StaticRoutes {
+		node.RoutingTable[prefix] = &RoutingEntry{
+			RouteType: Static,
+			NextHop:   addr,
+			Cost:      -1, /// there might be better way to represent cost "-". trying to think of some way to associate infinity/maxcost(16) with certain representation...
+		}
+	}
+
+	node.RegisterRecvHandler(proto.TestProtoNum, testRecvHandler)
+
+	return node, nil
 }
 
-// listen on designated interface, receive & unmarshal packets, then forward them to specific handlers
-func (n *Node) ListenOn(udpPort uint16) {}
+// a shared handler between host & router for test packet
+func testRecvHandler(packet *proto.Packet) {
+	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+}
 
+/****************** IP API ******************/
 type RecvHandlerFunc func(packet *proto.Packet) // params TBD
 
 func (n *Node) RegisterRecvHandler(protoNum int, callbackFunc RecvHandlerFunc) {
 	n.RecvHandlers[protoNum] = callbackFunc
 }
 
-func testRecvHandler(packet *proto.Packet) {
-	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+// listen on designated interface, receive & unmarshal packets, then forward them to specific handlers
+func (n *Node) ListenOn(udpPort uint16) {
+
 }
 
-func ripRecvHandler(packet *proto.Packet) {
-	fmt.Printf("Received rip packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
-}
-
-// send:
+// Send:
 // 1. Marshal data
 // 2. Recursively find next hop in the routing table
 // 3. Look up for the udp port in neighbor list
@@ -83,8 +135,8 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
 	var srcUDPConn *net.UDPConn
 	var err error
 
-	switch uint16(proto.TestProtoNum) {
-	case 0:
+	switch protoNum {
+	case proto.TestProtoNum:
 		nextHop = n.findNextHop(destIP)
 		if nextHop.LocalNextHop == "" {
 			return fmt.Errorf("error finding local next hop for the test packet")
@@ -104,7 +156,7 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
 			return fmt.Errorf("error resolving the dest udp port")
 		}
 
-	case 200:
+	case proto.RIPProtoNum:
 		nextHop = nil //TODO for RIP
 	default:
 		return fmt.Errorf("invalid protocol num %d", protoNum)
@@ -136,6 +188,71 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
 	return nil
 }
 
+// Turn up/turn down an interface:
+// 1. Update interface info
+// (2. For routers: Notify rip neighbors)
+func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
+	n.InterfacesMu.RLock()
+	defer n.InterfacesMu.RUnlock()
+
+	iface, ok := n.Interfaces[ifname]
+	if !ok {
+		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist\n", ifname)
+	}
+	iface.setIsDown(down)
+	return nil
+}
+
+/************ Node Print Helpers (return interface/neighbor/routing info in strings) ************/
+// Returns a string list of interface, vip of neighbor, udp of neighbor
+func (n *Node) GetNeighborsString() []string {
+	n.IFNeighborsMu.RLock()
+	defer n.IFNeighborsMu.RUnlock()
+
+	size := 0
+	for _, neighbors := range n.IFNeighbors {
+		size += len(neighbors)
+	}
+
+	res := make([]string, size)
+	index := 0
+	for ifname, neighbors := range n.IFNeighbors {
+		for _, neighbor := range neighbors {
+			res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, neighbor.getVIPString(), fmt.Sprintf("%v:%v", neighbor.getUDPString(), neighbor.GetUDPPort()))
+			index += 1
+		}
+	}
+	return res
+}
+
+// Returns a string list of interface
+func (n *Node) GetInterfacesString() []string {
+	n.InterfacesMu.RLock()
+	defer n.InterfacesMu.RUnlock()
+	size := len(n.Interfaces)
+	res := make([]string, size)
+	index := 0
+	for key, val := range n.Interfaces {
+		res[index] = fmt.Sprintf("%s\t%s\t%s\n", key, val.getPrefixString(), val.getIsDownString()) /// let's see if one tab works as separator
+		index += 1
+	}
+	return res
+}
+
+func (n *Node) GetRoutingTableString() []string {
+	n.RoutingTableMu.RLock()
+	defer n.RoutingTableMu.RUnlock()
+	size := len(n.RoutingTable)
+	res := make([]string, size)
+	index := 0
+	for prefix, rt := range n.RoutingTable {
+		res[index] = fmt.Sprintf("%s\t%s\t%s\t%s\n", string(rt.RouteType), prefix.String(), rt.getNextHopString(), rt.getCostString())
+		index += 1
+	}
+	return res
+}
+
+/************ helper funcs ************/
 func (n *Node) findNextHop(destIP netip.Addr) *RoutingEntry {
 	// ------- Test Packet
 	matchedPrefix := n.findLongestMatchedPrefix(destIP)
@@ -175,7 +292,7 @@ func (n *Node) findNeighbor(ifName string, destIP netip.Addr) *Neighbor {
 	nbhrs := n.IFNeighbors[ifName]
 
 	for _, nbhr := range nbhrs {
-		if nbhr.GetVIPString() == destIP.String() {
+		if nbhr.getVIPString() == destIP.String() {
 			return nbhr
 		}
 	}
@@ -188,31 +305,16 @@ func (n *Node) findSrcIP(ifName string) *Interface {
 	return n.Interfaces[ifName]
 }
 
-// turn up/turn down an interface:
-// 1. Update interface info
-// (2. For routers: Notify rip neighbors)
-func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
-	n.InterfacesMu.RLock()
-	defer n.InterfacesMu.RUnlock()
-
-	iface, ok := n.Interfaces[ifname]
-	if !ok {
-		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist\n", ifname)
-	}
-	iface.SetInterfaceIsDown(down)
-	return nil
-}
-
 func updateRoutingtable() { // params TBD
 
 }
 
 // ------- Neighbor
-func (n *Neighbor) GetVIPString() string {
+func (n *Neighbor) getVIPString() string {
 	return n.VIP.String()
 }
 
-func (n *Neighbor) GetUDPString() string {
+func (n *Neighbor) getUDPString() string {
 	return n.UDPAddr.Addr().String()
 }
 
@@ -221,82 +323,33 @@ func (n *Neighbor) GetUDPPort() uint16 {
 }
 
 // ------- Interface
-func (i *Interface) GetIsDownString() string {
+func (i *Interface) getIsDownString() string {
 	if i.IsDown {
 		return "down"
 	}
 	return "up"
 }
 
-func (i *Interface) GetPrefixString() string {
-	return i.AssignedPrefix.String()
+func (i *Interface) getPrefixString() string {
+	return fmt.Sprintf("%v/%v", i.AssignedIP, i.AssignedPrefix.Bits())
 }
 
-func (i *Interface) SetInterfaceIsDown(isDown bool) {
+func (i *Interface) setIsDown(isDown bool) { /// might just get rid of this
 	i.IsDown = isDown
 }
 
 // ------- RoutingEntry
 
-func (rt *RoutingEntry) GetNextHopString() string {
+func (rt *RoutingEntry) getNextHopString() string {
 	if rt.LocalNextHop != "" {
-		return fmt.Sprintf("LOCAL:%s", rt.NextHop.String())
+		return fmt.Sprintf("LOCAL:%s", rt.LocalNextHop)
 	}
 	return rt.NextHop.String()
 }
 
-func (rt *RoutingEntry) GetCostString() string {
+func (rt *RoutingEntry) getCostString() string {
+	if rt.Cost == -1 {
+		return "-"
+	}
 	return fmt.Sprint(rt.Cost)
-}
-
-// ------- Node Print Helpers
-// Returns a string list of interface, vip of neighbor, udp of neighbor
-func (n *Node) GetNeighborsString() [][]string {
-	n.IFNeighborsMu.RLock()
-	defer n.IFNeighborsMu.RUnlock()
-
-	rowSize := 0
-	for _, val := range n.IFNeighbors {
-		rowSize += len(val)
-	}
-
-	res := make([][]string, rowSize)
-	rowIndex := 0
-	for key, val := range n.IFNeighbors {
-		nbhrSize := len(val)
-		for i := 0; i < nbhrSize; i++ {
-			row := []string{key, val[i].GetVIPString(), val[i].GetUDPString()}
-			res[rowIndex] = row
-			rowIndex += 1
-		}
-	}
-
-	return res
-}
-
-// Returns a string list of interface
-func (n *Node) GetInterfacesString() [][]string {
-	n.InterfacesMu.RLock()
-	defer n.InterfacesMu.RUnlock()
-	size := len(n.Interfaces)
-	res := make([][]string, size)
-	index := 0
-	for key, val := range n.Interfaces {
-		res[index] = []string{key, val.GetPrefixString(), val.GetIsDownString()}
-		index += 1
-	}
-	return res
-}
-
-func (n *Node) GetRoutingTableString() [][]string {
-	n.RoutingTableMu.RLock()
-	defer n.RoutingTableMu.RUnlock()
-	size := len(n.RoutingTable)
-	res := make([][]string, size)
-	index := 0
-	for prefix, rt := range n.RoutingTable {
-		res[index] = []string{rt.RouteType, prefix.String(), rt.GetNextHopString(), rt.GetCostString()}
-		index += 1
-	}
-	return res
 }

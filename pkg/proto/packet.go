@@ -3,6 +3,7 @@ package proto
 import (
 	"fmt"
 	"net/netip"
+
 )
 
 type Packet struct {
