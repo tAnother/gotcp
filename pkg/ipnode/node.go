@@ -7,10 +7,13 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
+
+var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
 type RecvHandlerFunc func(packet *proto.Packet, node *Node)
 
@@ -114,7 +117,7 @@ func (n *Node) ListenOn(i *Interface) {
 	listenAddr := net.UDPAddrFromAddrPort(i.UDPAddr)
 	conn, err := net.ListenUDP("udp4", listenAddr)
 	if err != nil {
-		log.Println("Could not bind to UDP port: ", err)
+		logger.Println("Could not bind to UDP port: ", err)
 		return
 	}
 	i.conn = conn
@@ -123,21 +126,21 @@ func (n *Node) ListenOn(i *Interface) {
 		buf := make([]byte, proto.MTU)
 		_, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Println("Errorreading from UDP socket: ", err)
+			logger.Println("Errorreading from UDP socket: ", err)
 			return
 		}
 
 		// parse packet header
 		hdr, err := ipv4header.ParseHeader(buf)
 		if err != nil {
-			log.Println("Error parsing header: ", err)
+			logger.Println("Error parsing header: ", err)
 			continue // fail to parse - simply drop the packet
 		}
 
 		// validate checksum
 		checksumFromHeader := uint16(hdr.Checksum)
 		if checksumFromHeader != proto.ValidateChecksum(buf[:hdr.Len], checksumFromHeader) {
-			log.Println("Checksum mismatch detected")
+			logger.Println("Checksum mismatch detected")
 			continue // bad packet - simply drop it
 		}
 
@@ -147,7 +150,7 @@ func (n *Node) ListenOn(i *Interface) {
 			packet := &proto.Packet{Header: hdr, Payload: buf[hdr.Len:]}
 			handler(packet, n)
 		} else {
-			log.Println("Cannot handle packet with protocol num: ", hdr.Protocol)
+			logger.Println("Cannot handle packet with protocol num: ", hdr.Protocol)
 		}
 	}
 }
@@ -220,7 +223,7 @@ func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet
 	if err != nil {
 		return fmt.Errorf("error writing to socket: %v", err)
 	}
-	log.Printf("Sent %d bytes to %v \n", bytesWritten, udpAddr)
+	logger.Printf("Sent %d bytes to %v \n", bytesWritten, udpAddr)
 	return nil
 }
 

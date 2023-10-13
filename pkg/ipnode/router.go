@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/proto"
-	"log"
 	"net/netip"
 )
 
@@ -50,7 +49,7 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 	// try to forward the packet
 	nextHop, altDestIP := node.findNextHop(packet.Header.Dst)
 	if nextHop == nil || nextHop.LocalNextHop == "" {
-		log.Println("error finding local next hop for the test packet")
+		logger.Println("error finding local next hop for the test packet")
 		return
 	}
 	if !altDestIP.IsValid() {
@@ -59,7 +58,7 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 	srcIF := node.findSrcIF(nextHop.LocalNextHop)
 	nbhr := node.findNextNeighbor(nextHop.LocalNextHop, altDestIP)
 	if nbhr == nil {
-		log.Println("dest ip does not exist in neighbors")
+		logger.Println("dest ip does not exist in neighbors")
 		return
 	}
 
@@ -67,7 +66,7 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 	packet.Header.Checksum = 0
 	err := node.forwardPacket(srcIF, nbhr.UDPAddr, packet)
 	if err != nil {
-		log.Println(err)
+		logger.Println(err)
 	}
 }
 

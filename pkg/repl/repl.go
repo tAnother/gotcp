@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/proto"
 	"net/netip"
 	"os"
 	"strings"
@@ -193,7 +194,7 @@ func sendHandler(input string, replConfig *REPLConfig) error {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
 	}
 	msg := strings.Join(args[2:], " ")
-	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, 0)
+	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, proto.TestProtoNum)
 	if err != nil {
 		return err
 	}
