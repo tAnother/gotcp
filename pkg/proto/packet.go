@@ -25,7 +25,7 @@ type Packet struct {
 }
 
 func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *Packet {
-	logger.Printf("Creating a new packt with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
+	logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
 	return &Packet{
 		Header:  newHeader(srcIP, destIP, msg, protoNum),
 		Payload: msg,

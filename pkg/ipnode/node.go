@@ -104,6 +104,42 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 	return node, nil
 }
 
+// Send packet to neighbor on interface srcIF
+func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet *proto.Packet) error {
+	if srcIF.conn == nil {
+		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
+		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
+		conn, err := net.ListenUDP("udp4", listenAddr)
+		if err != nil {
+			return err
+		}
+		srcIF.conn = conn
+	}
+	udpAddr := net.UDPAddrFromAddrPort(remoteAddr)
+
+	// Assemble the header into a byte array
+	headerBytes, err := packet.Header.Marshal()
+	if err != nil {
+		return fmt.Errorf("error marshalling header:  %s", err)
+	}
+
+	// Cast back to an int, which is what the Header structure expects
+	packet.Header.Checksum = int(proto.ComputeChecksum(headerBytes))
+
+	bytesToSend, err := packet.Marshal()
+	if err != nil {
+		return fmt.Errorf("error marshalling packet: %s", err)
+	}
+
+	// Send the message to the "link-layer" addr:port on UDP
+	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
+	if err != nil {
+		return fmt.Errorf("error writing to socket: %v", err)
+	}
+	logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
+	return nil
+}
+
 /****************** IP API ******************/
 
 func (n *Node) RegisterRecvHandler(protoNum uint8, callbackFunc RecvHandlerFunc) {
@@ -165,7 +201,7 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
 	case proto.TestProtoNum:
 		logger.Println("Sending test packet...")
 		nextHop, altDestIP := n.findNextHop(destIP)
-		logger.Printf("Next hop: %v; previous step (alternative destIP): %v\n", nextHop, altDestIP)
+		logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
 		if nextHop == nil || nextHop.LocalNextHop == "" {
 			return fmt.Errorf("error finding local next hop for the test packet")
 		}
@@ -193,42 +229,6 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
 	packet := proto.NewPacket(srcIP, destIP, []byte(msg), protoNum)
 
 	return n.forwardPacket(srcIF, remoteAddr, packet)
-}
-
-// Send packet to neighbor on interface srcIF
-func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet *proto.Packet) error {
-	if srcIF.conn == nil {
-		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
-		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
-		conn, err := net.ListenUDP("udp4", listenAddr)
-		if err != nil {
-			return err
-		}
-		srcIF.conn = conn
-	}
-	udpAddr := net.UDPAddrFromAddrPort(remoteAddr)
-
-	// Assemble the header into a byte array
-	headerBytes, err := packet.Header.Marshal()
-	if err != nil {
-		return fmt.Errorf("error marshalling header:  %s", err)
-	}
-
-	// Cast back to an int, which is what the Header structure expects
-	packet.Header.Checksum = int(proto.ComputeChecksum(headerBytes))
-
-	bytesToSend, err := packet.Marshal()
-	if err != nil {
-		return fmt.Errorf("error marshalling packet: %s", err)
-	}
-
-	// Send the message to the "link-layer" addr:port on UDP
-	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
-	if err != nil {
-		return fmt.Errorf("error writing to socket: %v", err)
-	}
-	logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
-	return nil
 }
 
 // Turn up/turn down an interface:
@@ -321,7 +321,7 @@ func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
 	var longestPrefix netip.Prefix
 	maxLength := 0
 	for prefix := range n.RoutingTable {
-		if prefix.Contains(destIP) && prefix.Bits() > maxLength {
+		if prefix.Contains(destIP) && prefix.Bits() >= maxLength {
 			longestPrefix = prefix
 			maxLength = prefix.Bits()
 		}
