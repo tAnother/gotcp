@@ -386,7 +386,8 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
     
 
 4. Receive RIP packet
-
+    - If the packet is for this node
+    - Fetch the correponding interface
     - Fetch `func ripPacketHandler` from `n.RecvHandlers`
         - Trigger `ripPacketHandler()`
             - Unmarshall
@@ -396,11 +397,15 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
             - If Response Command: update the routing table
 
             ```Go
-            func updateRoutingtable(ripEntries []ripEntry) { // params TBD
+            func updateRoutingtable(ripEntries []ripEntry, n *Neighbor) { // params TBD
                 //For each ripEntry
-                    // 1. Convert to RoutingEntry
+                <D, C_n, N> = <ripEntry.Address, ripEntry.Cost, n>
+                    // 1. Convert addr and mask to netip.Addr and netip.Prefix 
+                    netIp := util.Uint32ToIp(ripEntry.Address)
+                    prefix := netip.PrefixFrom(netIp, mask)
                     // let c = ripEntry.cost + 1
-                    // 2. If the routingEntry not in the routing table and c < inifinity, add it to the table
+
+                    // 2. If the corresponding routingEntry not in the routing table and c < inifinity, add it to the table
                     // 3. If we have an existing RoutingEntry
                         // refer to Distance Vector Routing
             }

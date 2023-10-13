@@ -1,5 +1,10 @@
 package proto
 
+import (
+	"fmt"
+	"iptcp-nora-yu/pkg/util"
+)
+
 type RoutingCmdType uint16
 
 const (
@@ -21,10 +26,58 @@ type RIPMsg struct {
 	Entries    []*ripEntry
 }
 
-func (m *RIPMsg) Marshal() ([]byte, error) {
-	return nil, nil
+func (m *RIPMsg) Marshal() []byte {
+	b := make([]byte, 0)
+	command := util.Uint16ToBytes(uint16(m.Command))
+	numEntries := util.Uint16ToBytes(m.NumEntries)
+	b = append(b, command...)
+	b = append(b, numEntries...)
+	for _, entry := range m.Entries {
+		b = append(b, entry.Marshal()...)
+	}
+	return b
 }
 
-func (m *RIPMsg) UnMarshal(b []byte) error {
-	return nil
+func RIPMsgUnMarshal(b []byte) (ripMsg *RIPMsg, err error) {
+	command := util.BytesToUint16(b[0:2])
+	switch command {
+	case 1:
+		ripMsg.Command = RoutingCmdTypeRequest
+	case 2:
+		ripMsg.Command = RoutingCmdTypeResponse
+	default:
+		return nil, fmt.Errorf("invalid command")
+	}
+	ripMsg.NumEntries = util.BytesToUint16(b[2:4])
+	ripMsg.Entries = make([]*ripEntry, ripMsg.NumEntries)
+	for i := 0; i < int(ripMsg.NumEntries); i++ {
+		buf := b[4+i*12 : 4+(i+1)*12]
+		ripMsg.Entries[i], err = ripEntryUnMarshal(buf[0:12])
+		if err != nil {
+			return ripMsg, err
+		}
+	}
+	return ripMsg, nil
+}
+
+func (r *ripEntry) Marshal() []byte {
+	b := make([]byte, 0)
+	cost := util.Uint32ToBytes(r.Cost)
+	addr := util.Uint32ToBytes(r.Address)
+	mask := util.Uint32ToBytes(r.Mask)
+	b = append(b, cost...)
+	b = append(b, addr...)
+	b = append(b, mask...)
+	return b
+}
+
+func ripEntryUnMarshal(input []byte) (*ripEntry, error) {
+	if len(input) < 12 {
+		return nil, fmt.Errorf("invalid input")
+	}
+	return &ripEntry{
+		Cost:    util.BytesToUint32(input[0:4]),
+		Address: util.BytesToUint32(input[4:8]),
+		Mask:    util.BytesToUint32(input[8:12]),
+	}, nil
 }
