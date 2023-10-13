@@ -47,5 +47,5 @@ func main() {
 	// 4. set up a ticker (5s) to send RIP to neighbors (go routines)
 
 	// 5. run the repl
-	repl.Run(&router.Node) /// seems sussy...
+	repl.Run(router.Node) /// seems sussy...
 }

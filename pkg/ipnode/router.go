@@ -8,7 +8,7 @@ import (
 )
 
 type Router struct {
-	Node         Node
+	Node         *Node
 	RoutingMode  lnxconfig.RoutingMode
 	RipNeighbors []netip.Addr
 }
@@ -20,7 +20,7 @@ func NewRouter(config *lnxconfig.IPConfig) (*Router, error) {
 	}
 
 	router := &Router{
-		Node:         *node,
+		Node:         node,
 		RoutingMode:  config.RoutingMode,
 		RipNeighbors: make([]netip.Addr, len(config.RipNeighbors)),
 	}
