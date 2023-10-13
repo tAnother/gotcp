@@ -34,7 +34,7 @@ type Interface struct {
 	Name           string
 	AssignedIP     netip.Addr
 	AssignedPrefix netip.Prefix
-	SubnetMask     uint32
+	SubnetMask     int
 	UDPAddr        netip.AddrPort
 	IsDown         bool
 	conn           *net.UDPConn
@@ -69,7 +69,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 			Name:           ifcfg.Name,
 			AssignedIP:     ifcfg.AssignedIP,
 			AssignedPrefix: ifcfg.AssignedPrefix,
-			SubnetMask:     uint32(ifcfg.AssignedPrefix.Bits()),
+			SubnetMask:     ifcfg.AssignedPrefix.Bits(),
 			UDPAddr:        ifcfg.UDPAddr,
 		}
 
@@ -228,7 +228,7 @@ func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 
 	iface, ok := n.Interfaces[ifname]
 	if !ok {
-		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist\n", ifname)
+		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist", ifname)
 	}
 	iface.setIsDown(down)
 	return nil
@@ -264,7 +264,7 @@ func (n *Node) GetInterfacesString() []string {
 	res := make([]string, size)
 	index := 0
 	for ifname, i := range n.Interfaces {
-		res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, i.getPrefixString(), i.getIsDownString())
+		res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, i.getAddrPrefixString(), i.getIsDownString())
 		index += 1
 	}
 	return res
@@ -361,8 +361,8 @@ func (i *Interface) getIsDownString() string {
 	return "up"
 }
 
-func (i *Interface) getPrefixString() string {
-	return i.AssignedPrefix.String()
+func (i *Interface) getAddrPrefixString() string {
+	return fmt.Sprintf("%v/%v", i.AssignedIP, i.SubnetMask)
 }
 
 func (i *Interface) setIsDown(isDown bool) { /// might just get rid of this
