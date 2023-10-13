@@ -48,7 +48,7 @@ func IpToUint32(ip netip.Addr) uint32 {
 }
 
 func Uint32ToBytes(u uint32) []byte {
-	b := make([]byte, 0)
+	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, u)
 	return b
 }
@@ -61,7 +61,7 @@ func BytesToUint32(u []byte) uint32 {
 }
 
 func Uint16ToBytes(u uint16) []byte {
-	b := make([]byte, 0)
+	b := make([]byte, 2)
 	binary.BigEndian.PutUint16(b, u)
 	return b
 }
