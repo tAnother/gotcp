@@ -34,13 +34,11 @@ func main() {
 	repl := repl.NewRepl()
 
 	// 2. iterate all interfaces, start listening (go routines)
-	router.Node.InterfacesMu.RLock()
 	for _, i := range router.Node.Interfaces {
 		go func(i *ipnode.Interface) {
 			router.Node.ListenOn(i)
 		}(i)
 	}
-	router.Node.InterfacesMu.RUnlock()
 
 	// 3. set up a ticker (12s) to update routing table entries? (go routines)
 

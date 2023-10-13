@@ -46,25 +46,23 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 		}
 	}
 
-	// try to forward the packet
-	nextHop, altDestIP := node.findNextHop(packet.Header.Dst)
-	if nextHop == nil || nextHop.LocalNextHop == "" {
-		logger.Println("error finding local next hop for the test packet")
-		return
-	}
-	if !altDestIP.IsValid() {
-		altDestIP = packet.Header.Dst
-	}
-	srcIF := node.findSrcIF(nextHop.LocalNextHop)
-	nbhr := node.findNextNeighbor(nextHop.LocalNextHop, altDestIP)
-	if nbhr == nil {
-		logger.Println("dest ip does not exist in neighbors")
-		return
-	}
+	logger.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
 
-	packet.Header.TTL = packet.Header.TTL - 1
+	// try to forward the packet
 	packet.Header.Checksum = 0
-	err := node.forwardPacket(srcIF, nbhr.UDPAddr, packet)
+	packet.Header.TTL = packet.Header.TTL - 1
+	if packet.Header.TTL == 0 {
+		return
+	}
+	logger.Println("Forwarding packet...")
+
+	srcIF, remoteAddr, err := node.findLinkLayerSrcDst(packet.Header.Dst)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+	err = node.forwardPacket(srcIF, remoteAddr, packet)
 	if err != nil {
 		logger.Println(err)
 	}

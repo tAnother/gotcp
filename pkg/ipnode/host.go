@@ -16,11 +16,6 @@ func NewHost(config *lnxconfig.IPConfig) (*Node, error) {
 }
 
 func testRecvHandler(packet *proto.Packet, node *Node) {
-	for _, i := range node.Interfaces {
-		if packet.Header.Dst == i.AssignedIP {
-			fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-				packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
-			return
-		}
-	}
+	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
 }
