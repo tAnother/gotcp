@@ -2,7 +2,9 @@ package proto
 
 import (
 	"fmt"
+	"log"
 	"net/netip"
+	"os"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
@@ -15,12 +17,15 @@ const (
 	TestProtoNum uint8 = 0
 )
 
+var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+
 type Packet struct {
 	Header  *ipv4header.IPv4Header
 	Payload []byte
 }
 
 func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *Packet {
+	logger.Printf("Creating a new packt with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
 	return &Packet{
 		Header:  newHeader(srcIP, destIP, msg, protoNum),
 		Payload: msg,
