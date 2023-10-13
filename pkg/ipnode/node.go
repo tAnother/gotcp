@@ -32,7 +32,7 @@ type Interface struct {
 	AssignedPrefix netip.Prefix
 	SubnetMask     int
 	UDPAddr        netip.AddrPort
-	IsDown         bool
+	isDown         bool
 	conn           *net.UDPConn
 }
 
@@ -106,6 +106,10 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 
 // Send packet to neighbor on interface srcIF
 func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet *proto.Packet) error {
+	if srcIF.isDown {
+		logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
+		return nil
+	}
 	if srcIF.conn == nil {
 		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
 		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
@@ -140,7 +144,7 @@ func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet
 	return nil
 }
 
-/****************** IP API ******************/
+/************************************ IP API ***********************************/
 
 func (n *Node) RegisterRecvHandler(protoNum uint8, callbackFunc RecvHandlerFunc) {
 	n.recvHandlers[protoNum] = callbackFunc
@@ -164,6 +168,9 @@ func (n *Node) ListenOn(i *Interface) {
 		if err != nil {
 			logger.Printf("Error reading from UDP socket: %v\n", err)
 			return
+		}
+		if i.isDown { // spin wait. there should be better way to do this
+			continue
 		}
 
 		// parse packet header
@@ -239,11 +246,11 @@ func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 	if !ok {
 		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist", ifname)
 	}
-	iface.IsDown = down
+	iface.isDown = down
 	return nil
 }
 
-/************ Node Print Helpers (return interface/neighbor/routing info in strings) ************/
+/**************** Node Print Helpers (return interface/neighbor/routing info in strings) ****************/
 
 // Returns a string list of interface
 func (n *Node) GetInterfacesString() []string {
@@ -288,7 +295,7 @@ func (n *Node) GetRoutingTableString() []string {
 	return res
 }
 
-/************ helper funcs ************/
+/**************************** helper funcs ****************************/
 
 // Return the next hop & the virtual IP one step before the next hop (as the alternative link layer dest)
 func (n *Node) findNextHop(destIP netip.Addr) (entry *RoutingEntry, altAddr netip.Addr) {
@@ -345,7 +352,7 @@ func updateRoutingtable() { // params TBD
 }
 
 func (i *Interface) getIsDownString() string {
-	if i.IsDown {
+	if i.isDown {
 		return "down"
 	}
 	return "up"
