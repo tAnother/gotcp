@@ -51,6 +51,6 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 }
 
 // send routing info to RIP neighbors
-func SendUpdate()
+func SendUpdate() {}
 
 // and some function to convert proto.RIPMsg into RoutingEntry's:

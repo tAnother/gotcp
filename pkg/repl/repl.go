@@ -96,15 +96,15 @@ func lnHandler(input string, replConfig *REPLConfig) error {
 	neighbors := replConfig.node.GetNeighborsString()
 	writer := replConfig.writer
 
-	bytes, err := io.WriteString(writer, "Iface\tVIP\tUDPAddr\n")
-	log.Printf("[lnHandler] writes %d bytes\n", bytes)
+	_, err := io.WriteString(writer, "Iface\tVIP\tUDPAddr\n")
+	// log.Printf("[lnHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lnHandler cannot write the header to stdout.\n")
 	}
 
 	for _, neighborInfo := range neighbors {
-		bytes, err := io.WriteString(writer, neighborInfo)
-		log.Printf("[lnHandler] writes %d bytes\n", bytes)
+		_, err := io.WriteString(writer, neighborInfo)
+		// log.Printf("[lnHandler] writes %d bytes\n", bytes)
 		if err != nil {
 			return fmt.Errorf("lnHandler cannot write neighors to stdout.\n")
 		}
@@ -120,15 +120,15 @@ func liHandler(input string, replConfig *REPLConfig) error {
 	interfaces := replConfig.node.GetInterfacesString()
 	writer := replConfig.writer
 
-	bytes, err := io.WriteString(writer, "Name\tAddr/Prefix\tState\n")
-	log.Printf("[liHandler] writes %d bytes\n", bytes)
+	_, err := io.WriteString(writer, "Name\tAddr/Prefix\tState\n")
+	// log.Printf("[liHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("liHandler cannot write the header to stdout.\n")
 	}
 
 	for _, interfaceInfo := range interfaces {
-		bytes, err := io.WriteString(writer, interfaceInfo)
-		log.Printf("[liHandler] writes %d bytes", bytes)
+		_, err := io.WriteString(writer, interfaceInfo)
+		// log.Printf("[liHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("liHandler cannot write interfaces to stdout.\n")
 		}
@@ -144,15 +144,15 @@ func lrHandler(input string, replConfig *REPLConfig) error {
 	routingTable := replConfig.node.GetRoutingTableString()
 	writer := replConfig.writer
 
-	bytes, err := io.WriteString(writer, "T\tPrefix\tNext hop\tCost\n")
-	log.Printf("[lrHandler] writes %d bytes\n", bytes)
+	_, err := io.WriteString(writer, "T\tPrefix\tNext hop\tCost\n")
+	// log.Printf("[lrHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lrHandler cannot write the header to stdout.\n")
 	}
 
 	for _, rtInfo := range routingTable {
-		bytes, err := io.WriteString(writer, rtInfo)
-		log.Printf("[lrHandler] writes %d bytes", bytes)
+		_, err := io.WriteString(writer, rtInfo)
+		// log.Printf("[lrHandler] writes %d bytes", bytes)
 		if err != nil {
 			return fmt.Errorf("lrHandler cannot write routing table to stdout.\n")
 		}

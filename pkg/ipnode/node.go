@@ -17,9 +17,9 @@ type Node struct {
 	Interfaces     map[string]*Interface          // interface name -> interface instance
 	IFNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface  /// considering making this private
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
-	InterfacesMu   *sync.RWMutex
-	IFNeighborsMu  *sync.RWMutex
-	RoutingTableMu *sync.RWMutex
+	InterfacesMu   sync.RWMutex
+	IFNeighborsMu  sync.RWMutex
+	RoutingTableMu sync.RWMutex
 
 	RecvHandlers map[uint8]RecvHandlerFunc
 }
