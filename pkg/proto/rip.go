@@ -41,7 +41,7 @@ func (m *RIPMsg) Marshal() ([]byte, error) {
 	b = append(b, command...)
 	b = append(b, numEntries...)
 	for _, entry := range m.Entries {
-		b = append(b, entry.Marshal()...)
+		b = append(b, entry.marshal()...)
 	}
 	return b, nil
 }
@@ -68,7 +68,7 @@ func RIPMsgUnMarshal(b []byte) (ripMsg *RIPMsg, err error) {
 	return ripMsg, nil
 }
 
-func (r *ripEntry) Marshal() []byte {
+func (r *ripEntry) marshal() []byte {
 	b := make([]byte, 0)
 	cost := util.Uint32ToBytes(r.Cost)
 	addr := util.Uint32ToBytes(r.Address)
@@ -79,13 +79,12 @@ func (r *ripEntry) Marshal() []byte {
 	return b
 }
 
-func ripEntryUnMarshal(input []byte) (*ripEntry, error) {
+func ripEntryUnMarshal(input []byte) (rip *ripEntry, err error) {
 	if len(input) < 12 {
 		return nil, fmt.Errorf("invalid input")
 	}
-	return &ripEntry{
-		Cost:    util.BytesToUint32(input[0:4]),
-		Address: util.BytesToUint32(input[4:8]),
-		Mask:    util.BytesToUint32(input[8:12]),
-	}, nil
+	rip.Cost = util.BytesToUint32(input[0:4])
+	rip.Address = util.BytesToUint32(input[4:8])
+	rip.Mask = util.BytesToUint32(input[8:12])
+	return rip, nil
 }
