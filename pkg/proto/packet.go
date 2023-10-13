@@ -76,7 +76,7 @@ func ValidateTTL() {
 func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *ipv4header.IPv4Header {
 	return &ipv4header.IPv4Header{
 		Version:  4,
-		Len:      20, // Header length is always 20 when no IP options
+		Len:      20, // Header length is always 20 when no IP options provided
 		TOS:      0,
 		TotalLen: ipv4header.HeaderLen + len(msg),
 		ID:       0,

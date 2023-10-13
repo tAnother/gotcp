@@ -36,9 +36,9 @@ func main() {
 	// 2. iterate all interfaces, start listening (go routines)
 	router.Node.InterfacesMu.RLock()
 	for _, i := range router.Node.Interfaces {
-		go func() {
+		go func(i *ipnode.Interface) {
 			router.Node.ListenOn(i)
-		}()
+		}(i)
 	}
 	router.Node.InterfacesMu.RUnlock()
 

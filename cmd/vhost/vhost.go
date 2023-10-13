@@ -37,9 +37,9 @@ func main() {
 	// 2. iterate all interfaces, start listening (go routines)
 	host.InterfacesMu.RLock()
 	for _, i := range host.Interfaces {
-		go func() {
+		go func(i *ipnode.Interface) {
 			host.ListenOn(i) /// need to exit if conn initialization fails?
-		}()
+		}(i)
 	}
 	host.InterfacesMu.RUnlock()
 
