@@ -27,13 +27,27 @@ func NewRouter(config *lnxconfig.IPConfig) (*Router, error) {
 	copy(router.RipNeighbors, config.RipNeighbors)
 
 	node.RegisterRecvHandler(proto.RIPProtoNum, ripRecvHandler)
+	node.RegisterRecvHandler(proto.TestProtoNum, routerTestRecvHandler)
 
 	return router, nil
 }
 
-func ripRecvHandler(packet *proto.Packet) {
+func ripRecvHandler(packet *proto.Packet, node *Node) {
 	fmt.Printf("Received rip packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
 		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+}
+
+func routerTestRecvHandler(packet *proto.Packet, node *Node) {
+	for _, i := range node.Interfaces {
+		if packet.Header.Dst == i.AssignedIP {
+			fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+				packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+			return
+		}
+	}
+
+	// TODO: try to forward the packet
+
 }
 
 // send routing info to RIP neighbors

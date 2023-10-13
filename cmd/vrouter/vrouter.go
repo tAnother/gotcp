@@ -37,7 +37,7 @@ func main() {
 	router.Node.InterfacesMu.RLock()
 	for _, i := range router.Node.Interfaces {
 		go func() {
-			router.Node.ListenOn(i.UDPAddr.Port())
+			router.Node.ListenOn(i)
 		}()
 	}
 	router.Node.InterfacesMu.RUnlock()

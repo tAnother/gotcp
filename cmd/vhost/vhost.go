@@ -38,7 +38,7 @@ func main() {
 	host.InterfacesMu.RLock()
 	for _, i := range host.Interfaces {
 		go func() {
-			host.ListenOn(i.UDPAddr.Port())
+			host.ListenOn(i) /// need to exit if conn initialization fails?
 		}()
 	}
 	host.InterfacesMu.RUnlock()
