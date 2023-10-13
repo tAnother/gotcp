@@ -104,46 +104,6 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 	return node, nil
 }
 
-// Send packet to neighbor on interface srcIF
-func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet *proto.Packet) error {
-	if srcIF.isDown {
-		logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
-		return nil
-	}
-	if srcIF.conn == nil {
-		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
-		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
-		conn, err := net.ListenUDP("udp4", listenAddr)
-		if err != nil {
-			return err
-		}
-		srcIF.conn = conn
-	}
-	udpAddr := net.UDPAddrFromAddrPort(remoteAddr)
-
-	// Assemble the header into a byte array
-	headerBytes, err := packet.Header.Marshal()
-	if err != nil {
-		return fmt.Errorf("error marshalling header:  %s", err)
-	}
-
-	// Cast back to an int, which is what the Header structure expects
-	packet.Header.Checksum = int(proto.ComputeChecksum(headerBytes))
-
-	bytesToSend, err := packet.Marshal()
-	if err != nil {
-		return fmt.Errorf("error marshalling packet: %s", err)
-	}
-
-	// Send the message to the "link-layer" addr:port on UDP
-	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
-	if err != nil {
-		return fmt.Errorf("error writing to socket: %v", err)
-	}
-	logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
-	return nil
-}
-
 /************************************ IP API ***********************************/
 
 func (n *Node) RegisterRecvHandler(protoNum uint8, callbackFunc RecvHandlerFunc) {
@@ -203,28 +163,15 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
 	var srcIF *Interface
 	var srcIP netip.Addr
 	var remoteAddr netip.AddrPort
+	var err error
 
 	switch protoNum {
 	case proto.TestProtoNum:
 		logger.Println("Sending test packet...")
-		nextHop, altDestIP := n.findNextHop(destIP)
-		logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
-		if nextHop == nil || nextHop.LocalNextHop == "" {
-			return fmt.Errorf("error finding local next hop for the test packet")
+		srcIF, remoteAddr, err = n.findLinkLayerSrcDst(destIP)
+		if err != nil {
+			return err
 		}
-		if !altDestIP.IsValid() {
-			altDestIP = destIP
-		}
-		// find src interface
-		srcIF = n.Interfaces[nextHop.LocalNextHop]
-		srcIP = srcIF.AssignedIP
-		// find the nbhr
-		nbhr := n.findNextNeighbor(nextHop.LocalNextHop, altDestIP)
-		if nbhr == nil {
-			return fmt.Errorf("destIP not found in the neighbors of %v", nextHop.LocalNextHop)
-		}
-		remoteAddr = nbhr.UDPAddr
-
 	case proto.RIPProtoNum:
 		logger.Println("Sending rip packet...")
 		// nextHop := nil //TODO for RIP
@@ -232,10 +179,9 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
-	// create a new packet for msg
 	packet := proto.NewPacket(srcIP, destIP, []byte(msg), protoNum)
-
-	return n.forwardPacket(srcIF, remoteAddr, packet)
+	err = n.forwardPacket(srcIF, remoteAddr, packet)
+	return err
 }
 
 // Turn up/turn down an interface:
@@ -297,13 +243,71 @@ func (n *Node) GetRoutingTableString() []string {
 
 /**************************** helper funcs ****************************/
 
-// Return the next hop & the virtual IP one step before the next hop (as the alternative link layer dest)
-func (n *Node) findNextHop(destIP netip.Addr) (entry *RoutingEntry, altAddr netip.Addr) {
-	// ------- Test Packet
-	altAddr = netip.Addr{}
+// Send packet to neighbor on interface srcIF
+func (n *Node) forwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto.Packet) error {
+	if srcIF.isDown {
+		logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
+		return nil
+	}
+	if srcIF.conn == nil {
+		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
+		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
+		conn, err := net.ListenUDP("udp4", listenAddr)
+		if err != nil {
+			return err
+		}
+		srcIF.conn = conn
+	}
+	udpAddr := net.UDPAddrFromAddrPort(dst)
+
+	// Assemble the header into a byte array
+	headerBytes, err := packet.Header.Marshal()
+	if err != nil {
+		return fmt.Errorf("error marshalling header:  %s", err)
+	}
+
+	// Cast back to an int, which is what the Header structure expects
+	packet.Header.Checksum = int(proto.ComputeChecksum(headerBytes))
+
+	bytesToSend, err := packet.Marshal()
+	if err != nil {
+		return fmt.Errorf("error marshalling packet: %s", err)
+	}
+
+	// Send the message to the "link-layer" addr:port on UDP
+	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
+	if err != nil {
+		return fmt.Errorf("error writing to socket: %v", err)
+	}
+	logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
+	return nil
+}
+
+// Return the link layer src (interface) and dest (remote addr)
+func (n *Node) findLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) {
+	nextHop, altDestIP := n.findNextHopEntry(destIP)
+	logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
+	if nextHop == nil || nextHop.LocalNextHop == "" {
+		return nil, netip.AddrPort{}, fmt.Errorf("error finding local next hop for the test packet")
+	}
+	if !altDestIP.IsValid() {
+		altDestIP = destIP
+	}
+
+	srcIF := n.Interfaces[nextHop.LocalNextHop]
+	nbhr := n.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
+	if nbhr == nil {
+		return nil, netip.AddrPort{}, fmt.Errorf("DestIP not found in the neighbors of %v", nextHop.LocalNextHop)
+	}
+	return srcIF, nbhr.UDPAddr, nil
+}
+
+// Return the next hop, and the virtual IP one step before the next hop (as the alternative link layer dest)
+func (n *Node) findNextHopEntry(destIP netip.Addr) (entry *RoutingEntry, altAddr netip.Addr) {
 	n.RoutingTableMu.RLock()
 	defer n.RoutingTableMu.RUnlock()
 
+	altAddr = netip.Addr{}
 	matchedPrefix := n.findLongestMatchedPrefix(destIP)
 	if !matchedPrefix.IsValid() {
 		return nil, altAddr
@@ -336,7 +340,8 @@ func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
 	return longestPrefix
 }
 
-func (n *Node) findNextNeighbor(ifName string, nexthopIP netip.Addr) *Neighbor {
+// Return the neighbor corresponding to the given next hop IP
+func (n *Node) findNextHopNeighbor(ifName string, nexthopIP netip.Addr) *Neighbor {
 	nbhrs := n.ifNeighbors[ifName]
 
 	for _, nbhr := range nbhrs {
