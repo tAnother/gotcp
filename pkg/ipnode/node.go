@@ -4,38 +4,44 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/proto"
-	"iptcp-nora-yu/pkg/util"
 	"log"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
+
+var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+
+type RecvHandlerFunc func(packet *proto.Packet, node *Node)
 
 type Node struct {
 	Interfaces     map[string]*Interface          // interface name -> interface instance
-	IFNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
+	IFNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface  /// considering making this private
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
-	RoutingTableMu *sync.RWMutex
+	InterfacesMu   sync.RWMutex
+	IFNeighborsMu  sync.RWMutex
+	RoutingTableMu sync.RWMutex
 
-	RecvHandlers  map[int]RecvHandlerFunc
-	IFNeighborsMu *sync.RWMutex
-	InterfacesMu  *sync.RWMutex
-}
-
-type Neighbor struct {
-	VIP     netip.Addr // virtual ip addr
-	UDPAddr netip.AddrPort
-	IFName  string
+	RecvHandlers map[uint8]RecvHandlerFunc
 }
 
 type Interface struct {
 	Name           string
 	AssignedIP     netip.Addr
 	AssignedPrefix netip.Prefix
-	SubnetMask     uint32
+	SubnetMask     int
 	UDPAddr        netip.AddrPort
 	IsDown         bool
 	conn           *net.UDPConn
+}
+
+type Neighbor struct {
+	VIP     netip.Addr // virtual ip addr
+	UDPAddr netip.AddrPort
+	IFName  string
 }
 
 type RouteType string
@@ -53,16 +59,13 @@ type RoutingEntry struct {
 	Cost         int16
 }
 
-// init a node instance & register handlers
+// Init a node instance & register handlers
 func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 	node := &Node{
-		Interfaces:     make(map[string]*Interface),
-		IFNeighbors:    make(map[string][]*Neighbor),
-		RoutingTable:   make(map[netip.Prefix]*RoutingEntry),
-		RecvHandlers:   make(map[int]RecvHandlerFunc),
-		IFNeighborsMu:  &sync.RWMutex{},
-		InterfacesMu:   &sync.RWMutex{},
-		RoutingTableMu: &sync.RWMutex{},
+		Interfaces:   make(map[string]*Interface),
+		IFNeighbors:  make(map[string][]*Neighbor),
+		RoutingTable: make(map[netip.Prefix]*RoutingEntry),
+		RecvHandlers: make(map[uint8]RecvHandlerFunc),
 	}
 
 	for _, ifcfg := range config.Interfaces {
@@ -70,7 +73,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 			Name:           ifcfg.Name,
 			AssignedIP:     ifcfg.AssignedIP,
 			AssignedPrefix: ifcfg.AssignedPrefix,
-			SubnetMask:     uint32(ifcfg.AssignedPrefix.Bits()),
+			SubnetMask:     ifcfg.AssignedPrefix.Bits(),
 			UDPAddr:        ifcfg.UDPAddr,
 		}
 
@@ -100,70 +103,106 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 		}
 	}
 
-	node.RegisterRecvHandler(proto.TestProtoNum, testRecvHandler)
-
 	return node, nil
 }
 
-// a shared handler between host & router for test packet
-func testRecvHandler(packet *proto.Packet) {
-	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
-}
-
 /****************** IP API ******************/
-type RecvHandlerFunc func(packet *proto.Packet) // params TBD
 
-func (n *Node) RegisterRecvHandler(protoNum int, callbackFunc RecvHandlerFunc) {
+func (n *Node) RegisterRecvHandler(protoNum uint8, callbackFunc RecvHandlerFunc) {
 	n.RecvHandlers[protoNum] = callbackFunc
 }
 
-// listen on designated interface, receive & unmarshal packets, then forward them to specific handlers
-func (n *Node) ListenOn(udpPort uint16) {
+// Listen on designated interface, receive & unmarshal packets, then dispatch them to specific handlers
+func (n *Node) ListenOn(i *Interface) {
+	listenAddr := net.UDPAddrFromAddrPort(i.UDPAddr)
+	conn, err := net.ListenUDP("udp4", listenAddr)
+	if err != nil {
+		logger.Println("Could not bind to UDP port: ", err)
+		return
+	}
+	i.conn = conn
 
+	for {
+		buf := make([]byte, proto.MTU)
+		_, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			logger.Println("Errorreading from UDP socket: ", err)
+			return
+		}
+
+		// parse packet header
+		hdr, err := ipv4header.ParseHeader(buf)
+		if err != nil {
+			logger.Println("Error parsing header: ", err)
+			continue // fail to parse - simply drop the packet
+		}
+
+		// validate checksum
+		checksumFromHeader := uint16(hdr.Checksum)
+		if checksumFromHeader != proto.ValidateChecksum(buf[:hdr.Len], checksumFromHeader) {
+			logger.Println("Checksum mismatch detected")
+			continue // bad packet - simply drop it
+		}
+
+		// forward to handler
+		handler, ok := n.RecvHandlers[uint8(hdr.Protocol)]
+		if ok {
+			packet := &proto.Packet{Header: hdr, Payload: buf[hdr.Len:]}
+			handler(packet, n)
+		} else {
+			logger.Println("Cannot handle packet with protocol num: ", hdr.Protocol)
+		}
+	}
 }
 
-// Send:
-// 1. Marshal data
-// 2. Recursively find next hop in the routing table
-// 3. Look up for the udp port in neighbor list
-// 4. Write to the dest UDP port
-func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
-	var nextHop *RoutingEntry
+// Send msg to destIP
+func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
+	var srcIF *Interface
 	var srcIP netip.Addr
-	var remoteAddr *net.UDPAddr
-	var srcUDPConn *net.UDPConn
-	var err error
+	var remoteAddr netip.AddrPort
 
 	switch protoNum {
 	case proto.TestProtoNum:
-		nextHop = n.findNextHop(destIP)
-		if nextHop.LocalNextHop == "" {
+		nextHop, altDestIP := n.findNextHop(destIP)
+		if nextHop == nil || nextHop.LocalNextHop == "" {
 			return fmt.Errorf("error finding local next hop for the test packet")
 		}
+		if !altDestIP.IsValid() {
+			altDestIP = destIP
+		}
 		// find src interface
-		srcIF := n.findSrcIP(nextHop.LocalNextHop)
+		srcIF := n.findSrcIF(nextHop.LocalNextHop)
 		srcIP = srcIF.AssignedIP
-		srcUDPConn = srcIF.conn
 		// find the nbhr
-		nbhr := n.findNeighbor(nextHop.LocalNextHop, destIP)
+		nbhr := n.findNextNeighbor(nextHop.LocalNextHop, altDestIP)
 		if nbhr == nil {
 			return fmt.Errorf("dest ip does not exist in neighbors")
 		}
-		// resolve nbhrs udp addr
-		remoteAddr, err = util.RemotePort(nbhr.UDPAddr)
-		if err != nil {
-			return fmt.Errorf("error resolving the dest udp port")
-		}
+		remoteAddr = nbhr.UDPAddr
 
 	case proto.RIPProtoNum:
-		nextHop = nil //TODO for RIP
+		// nextHop := nil //TODO for RIP
 	default:
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
-	// Start filling in the header
+	// create a new packet for msg
 	packet := proto.NewPacket(srcIP, destIP, []byte(msg), protoNum)
+
+	return n.forwardPacket(srcIF, remoteAddr, packet)
+}
+
+// Send packet to neighbor on interface srcIF
+func (n *Node) forwardPacket(srcIF *Interface, remoteAddr netip.AddrPort, packet *proto.Packet) error {
+	if srcIF.conn == nil {
+		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
+		conn, err := net.ListenUDP("udp4", listenAddr)
+		if err != nil {
+			return err
+		}
+		srcIF.conn = conn
+	}
+	udpAddr := net.UDPAddrFromAddrPort(remoteAddr)
 
 	// Assemble the header into a byte array
 	headerBytes, err := packet.Header.Marshal()
@@ -180,26 +219,26 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum int) error {
 	}
 
 	// Send the message to the "link-layer" addr:port on UDP
-	bytesWritten, err := srcUDPConn.WriteToUDP(bytesToSend, remoteAddr)
+	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
 	if err != nil {
 		return fmt.Errorf("error writing to socket: %v", err)
 	}
-	log.Printf("Sent %d bytes from %v to %v \n", bytesWritten, srcIP, destIP)
+	logger.Printf("Sent %d bytes to %v \n", bytesWritten, udpAddr)
 	return nil
 }
 
 // Turn up/turn down an interface:
 // 1. Update interface info
-// (2. For routers: Notify rip neighbors)
+// TODO: For routers: Notify rip neighbors (maybe we need 2 versions)
 func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 	n.InterfacesMu.RLock()
 	defer n.InterfacesMu.RUnlock()
 
 	iface, ok := n.Interfaces[ifname]
 	if !ok {
-		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist\n", ifname)
+		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist", ifname)
 	}
-	iface.setIsDown(down)
+	iface.IsDown = down
 	return nil
 }
 
@@ -218,7 +257,7 @@ func (n *Node) GetNeighborsString() []string {
 	index := 0
 	for ifname, neighbors := range n.IFNeighbors {
 		for _, neighbor := range neighbors {
-			res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, neighbor.getVIPString(), fmt.Sprintf("%v:%v", neighbor.getUDPString(), neighbor.GetUDPPort()))
+			res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, neighbor.getVIPString(), neighbor.getUDPString())
 			index += 1
 		}
 	}
@@ -232,8 +271,8 @@ func (n *Node) GetInterfacesString() []string {
 	size := len(n.Interfaces)
 	res := make([]string, size)
 	index := 0
-	for key, val := range n.Interfaces {
-		res[index] = fmt.Sprintf("%s\t%s\t%s\n", key, val.getPrefixString(), val.getIsDownString()) /// let's see if one tab works as separator
+	for ifname, i := range n.Interfaces {
+		res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, i.getAddrPrefixString(), i.getIsDownString())
 		index += 1
 	}
 	return res
@@ -253,22 +292,30 @@ func (n *Node) GetRoutingTableString() []string {
 }
 
 /************ helper funcs ************/
-func (n *Node) findNextHop(destIP netip.Addr) *RoutingEntry {
+
+// Return the next hop & the virtual IP one step before the next hop (as the alternative link layer dest)
+func (n *Node) findNextHop(destIP netip.Addr) (entry *RoutingEntry, altAddr netip.Addr) {
 	// ------- Test Packet
-	matchedPrefix := n.findLongestMatchedPrefix(destIP)
+	altAddr = netip.Addr{}
 	n.RoutingTableMu.RLock()
 	defer n.RoutingTableMu.RUnlock()
 
-	entry := n.RoutingTable[matchedPrefix]
-	// if not local next hop, need to consult the routing table again
-	if entry.LocalNextHop == "" {
+	matchedPrefix := n.findLongestMatchedPrefix(destIP)
+	if !matchedPrefix.IsValid() {
+		return nil, altAddr
+	}
+	entry = n.RoutingTable[matchedPrefix]
+
+	// search recursively until hitting a local interface
+	for entry.LocalNextHop == "" {
+		altAddr = entry.NextHop
 		matchedPrefix = n.findLongestMatchedPrefix(entry.NextHop)
 		if !matchedPrefix.IsValid() {
-			return nil
+			return nil, altAddr
 		}
 		entry = n.RoutingTable[matchedPrefix]
 	}
-	return entry
+	return entry, altAddr
 }
 
 func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
@@ -276,7 +323,7 @@ func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
 	defer n.RoutingTableMu.RUnlock()
 	var longestPrefix netip.Prefix
 	maxLength := 0
-	for prefix, _ := range n.RoutingTable {
+	for prefix := range n.RoutingTable {
 		if prefix.Contains(destIP) && prefix.Bits() > maxLength {
 			longestPrefix = prefix
 			maxLength = prefix.Bits()
@@ -285,21 +332,21 @@ func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
 	return longestPrefix
 }
 
-func (n *Node) findNeighbor(ifName string, destIP netip.Addr) *Neighbor {
+func (n *Node) findNextNeighbor(ifName string, nexthopIP netip.Addr) *Neighbor {
 	n.IFNeighborsMu.RLock()
 	defer n.IFNeighborsMu.RUnlock()
 
 	nbhrs := n.IFNeighbors[ifName]
 
 	for _, nbhr := range nbhrs {
-		if nbhr.getVIPString() == destIP.String() {
+		if nbhr.VIP == nexthopIP {
 			return nbhr
 		}
 	}
 	return nil
 }
 
-func (n *Node) findSrcIP(ifName string) *Interface {
+func (n *Node) findSrcIF(ifName string) *Interface {
 	n.InterfacesMu.RLock()
 	defer n.InterfacesMu.RUnlock()
 	return n.Interfaces[ifName]
@@ -309,20 +356,6 @@ func updateRoutingtable() { // params TBD
 
 }
 
-// ------- Neighbor
-func (n *Neighbor) getVIPString() string {
-	return n.VIP.String()
-}
-
-func (n *Neighbor) getUDPString() string {
-	return n.UDPAddr.Addr().String()
-}
-
-func (n *Neighbor) GetUDPPort() uint16 {
-	return n.UDPAddr.Port()
-}
-
-// ------- Interface
 func (i *Interface) getIsDownString() string {
 	if i.IsDown {
 		return "down"
@@ -330,15 +363,17 @@ func (i *Interface) getIsDownString() string {
 	return "up"
 }
 
-func (i *Interface) getPrefixString() string {
-	return fmt.Sprintf("%v/%v", i.AssignedIP, i.AssignedPrefix.Bits())
+func (i *Interface) getAddrPrefixString() string {
+	return fmt.Sprintf("%v/%v", i.AssignedIP, i.SubnetMask)
 }
 
-func (i *Interface) setIsDown(isDown bool) { /// might just get rid of this
-	i.IsDown = isDown
+func (n *Neighbor) getVIPString() string {
+	return n.VIP.String()
 }
 
-// ------- RoutingEntry
+func (n *Neighbor) getUDPString() string {
+	return n.UDPAddr.String()
+}
 
 func (rt *RoutingEntry) getNextHopString() string {
 	if rt.LocalNextHop != "" {

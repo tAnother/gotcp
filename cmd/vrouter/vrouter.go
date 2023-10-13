@@ -36,9 +36,9 @@ func main() {
 	// 2. iterate all interfaces, start listening (go routines)
 	router.Node.InterfacesMu.RLock()
 	for _, i := range router.Node.Interfaces {
-		go func() {
-			router.Node.ListenOn(i.UDPAddr.Port())
-		}()
+		go func(i *ipnode.Interface) {
+			router.Node.ListenOn(i)
+		}(i)
 	}
 	router.Node.InterfacesMu.RUnlock()
 
@@ -47,5 +47,5 @@ func main() {
 	// 4. set up a ticker (5s) to send RIP to neighbors (go routines)
 
 	// 5. run the repl
-	repl.Run(&router.Node) /// seems sussy...
+	repl.Run(router.Node) /// seems sussy...
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/proto"
 	"net/netip"
 	"os"
 	"strings"
@@ -95,7 +96,7 @@ func lnHandler(input string, replConfig *REPLConfig) error {
 	neighbors := replConfig.node.GetNeighborsString()
 	writer := replConfig.writer
 
-	_, err := io.WriteString(writer, "Iface\tVIP\tUDPAddr\n")
+	_, err := io.WriteString(writer, "Iface\tVIP\t\tUDPAddr\n")
 	// log.Printf("[lnHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lnHandler cannot write the header to stdout.\n")
@@ -143,7 +144,7 @@ func lrHandler(input string, replConfig *REPLConfig) error {
 	routingTable := replConfig.node.GetRoutingTableString()
 	writer := replConfig.writer
 
-	_, err := io.WriteString(writer, "T\tPrefix\tNext hop\tCost\n")
+	_, err := io.WriteString(writer, "T\tPrefix\t\tNext hop\tCost\n")
 	// log.Printf("[lrHandler] writes %d bytes\n", bytes)
 	if err != nil {
 		return fmt.Errorf("lrHandler cannot write the header to stdout.\n")
@@ -193,7 +194,7 @@ func sendHandler(input string, replConfig *REPLConfig) error {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
 	}
 	msg := strings.Join(args[2:], " ")
-	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, 0)
+	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, proto.TestProtoNum)
 	if err != nil {
 		return err
 	}
