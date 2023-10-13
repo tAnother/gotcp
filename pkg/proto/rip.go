@@ -26,16 +26,24 @@ type RIPMsg struct {
 	Entries    []*ripEntry
 }
 
-func (m *RIPMsg) Marshal() []byte {
+func (m *RIPMsg) Marshal() ([]byte, error) {
 	b := make([]byte, 0)
-	command := util.Uint16ToBytes(uint16(m.Command))
+	var command []byte
+	switch m.Command {
+	case RoutingCmdTypeRequest:
+		command = util.Uint16ToBytes(1)
+	case RoutingCmdTypeResponse:
+		command = util.Uint16ToBytes(2)
+	default:
+		return nil, fmt.Errorf("invalid command type")
+	}
 	numEntries := util.Uint16ToBytes(m.NumEntries)
 	b = append(b, command...)
 	b = append(b, numEntries...)
 	for _, entry := range m.Entries {
 		b = append(b, entry.Marshal()...)
 	}
-	return b
+	return b, nil
 }
 
 func RIPMsgUnMarshal(b []byte) (ripMsg *RIPMsg, err error) {
