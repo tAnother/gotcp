@@ -24,13 +24,16 @@ type Node struct {
 	RoutingTableMu sync.RWMutex
 
 	recvHandlers map[uint8]RecvHandlerFunc
+
+	// router specific info
+	routingMode  lnxconfig.RoutingMode
+	ripNeighbors []netip.Addr
 }
 
 type Interface struct {
 	Name           string
 	AssignedIP     netip.Addr
 	AssignedPrefix netip.Prefix
-	SubnetMask     int
 	UDPAddr        netip.AddrPort
 	isDown         bool
 	conn           *net.UDPConn
@@ -64,14 +67,16 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 		ifNeighbors:  make(map[string][]*Neighbor),
 		RoutingTable: make(map[netip.Prefix]*RoutingEntry),
 		recvHandlers: make(map[uint8]RecvHandlerFunc),
+		routingMode:  config.RoutingMode,
+		ripNeighbors: make([]netip.Addr, len(config.RipNeighbors)),
 	}
+	copy(node.ripNeighbors, config.RipNeighbors)
 
 	for _, ifcfg := range config.Interfaces {
 		node.Interfaces[ifcfg.Name] = &Interface{
 			Name:           ifcfg.Name,
 			AssignedIP:     ifcfg.AssignedIP,
 			AssignedPrefix: ifcfg.AssignedPrefix,
-			SubnetMask:     ifcfg.AssignedPrefix.Bits(),
 			UDPAddr:        ifcfg.UDPAddr,
 		}
 
@@ -364,7 +369,7 @@ func (i *Interface) getIsDownString() string {
 }
 
 func (i *Interface) getAddrPrefixString() string {
-	return fmt.Sprintf("%v/%v", i.AssignedIP, i.SubnetMask)
+	return fmt.Sprintf("%v/%v", i.AssignedIP, i.AssignedPrefix.Bits())
 }
 
 func (n *Neighbor) getVIPString() string {

@@ -4,30 +4,16 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/proto"
-	"net/netip"
 )
 
-type Router struct {
-	Node         *Node
-	RoutingMode  lnxconfig.RoutingMode
-	RipNeighbors []netip.Addr
-}
-
-func NewRouter(config *lnxconfig.IPConfig) (*Router, error) {
-	node, err := newNode(config)
+func NewRouter(config *lnxconfig.IPConfig) (*Node, error) {
+	router, err := newNode(config)
 	if err != nil {
 		return nil, err
 	}
 
-	router := &Router{
-		Node:         node,
-		RoutingMode:  config.RoutingMode,
-		RipNeighbors: make([]netip.Addr, len(config.RipNeighbors)),
-	}
-	copy(router.RipNeighbors, config.RipNeighbors)
-
-	node.RegisterRecvHandler(proto.RIPProtoNum, ripRecvHandler)
-	node.RegisterRecvHandler(proto.TestProtoNum, routerTestRecvHandler)
+	router.RegisterRecvHandler(proto.RIPProtoNum, ripRecvHandler)
+	router.RegisterRecvHandler(proto.TestProtoNum, routerTestRecvHandler)
 
 	return router, nil
 }

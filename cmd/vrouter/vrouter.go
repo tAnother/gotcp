@@ -34,9 +34,9 @@ func main() {
 	repl := repl.NewRepl()
 
 	// 2. iterate all interfaces, start listening (go routines)
-	for _, i := range router.Node.Interfaces {
+	for _, i := range router.Interfaces {
 		go func(i *ipnode.Interface) {
-			router.Node.ListenOn(i)
+			router.ListenOn(i)
 		}(i)
 	}
 
@@ -45,5 +45,5 @@ func main() {
 	// 4. set up a ticker (5s) to send RIP to neighbors (go routines)
 
 	// 5. run the repl
-	repl.Run(router.Node) /// seems sussy...
+	repl.Run(router) /// seems sussy...
 }
