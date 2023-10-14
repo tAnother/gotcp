@@ -143,8 +143,11 @@ func (n *Node) ListenOn(i *Interface) {
 			continue
 		}
 
-		//if packet is not for this interface and TTL reaches 0, drop the packet
-		if !isForInterface(i, hdr) && hdr.TTL-1 == 0 {
+		hdr.TTL--
+		logger.Printf("Received packet: Src: %s, Dst: %s, TTL: %d\n", hdr.Src, hdr.Dst, hdr.TTL)
+
+		// if packet is not for this interface and TTL reaches 0, drop the packet
+		if !isForInterface(i, hdr) && hdr.TTL <= 0 {
 			logger.Printf("Packet is not for interface with IP %v and TTL reaches 0. Dropping the packet...\n", i.AssignedIP)
 			continue
 		}
@@ -304,12 +307,12 @@ func (n *Node) findLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPor
 		altDestIP = destIP
 	}
 	srcIF := n.Interfaces[nextHop.LocalNextHop]
-	//if it's for this local interface
+	// if it's for this local interface
 	if srcIF.AssignedIP == destIP {
 		return srcIF, srcIF.UDPAddr, nil
 	}
 
-	//if it's for the nbhr of this local interface, find the neighbor
+	// if it's for the nbhr of this local interface, find the neighbor
 	nbhr := n.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
 	if nbhr == nil {
 		return nil, netip.AddrPort{}, fmt.Errorf("DestIP not found in the neighbors of %v", nextHop.LocalNextHop)

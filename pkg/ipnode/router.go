@@ -27,20 +27,13 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 	for _, i := range node.Interfaces {
 		if packet.Header.Dst == i.AssignedIP {
 			fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-				packet.Header.Src, packet.Header.Dst, packet.Header.TTL-1, packet.Payload)
+				packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
 			return
 		}
 	}
 
-	logger.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-		packet.Header.Src, packet.Header.Dst, packet.Header.TTL-1, packet.Payload)
-
-	// try to forward the packet
+	// forward the packet
 	packet.Header.Checksum = 0
-	packet.Header.TTL = packet.Header.TTL - 1
-	if packet.Header.TTL == 0 {
-		return
-	}
 	logger.Println("Forwarding packet...")
 
 	srcIF, remoteAddr, err := node.findLinkLayerSrcDst(packet.Header.Dst)
