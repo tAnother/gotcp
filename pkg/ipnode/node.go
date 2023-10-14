@@ -20,11 +20,11 @@ type Node struct {
 	ifNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
 	RoutingTableMu sync.RWMutex
+	routingMode    lnxconfig.RoutingMode
 
 	recvHandlers map[uint8]RecvHandlerFunc
 
 	// router specific info
-	routingMode  lnxconfig.RoutingMode
 	ripNeighbors []netip.Addr
 }
 
@@ -69,6 +69,9 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 		ripNeighbors: make([]netip.Addr, len(config.RipNeighbors)),
 	}
 	copy(node.ripNeighbors, config.RipNeighbors)
+	if node.routingMode == lnxconfig.RoutingTypeNone {
+		node.routingMode = lnxconfig.RoutingTypeStatic
+	}
 
 	for _, ifcfg := range config.Interfaces {
 		node.Interfaces[ifcfg.Name] = &Interface{
