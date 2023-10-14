@@ -62,66 +62,27 @@ func ripRecvHandler(packet *proto.Packet, node *Node) {
 			logger.Printf("RIP request must have 0 num entries.\n")
 			return
 		}
-		updatedEntries := node.getUpdatedEntries()
-		response := &proto.RipMsg{
-			Command:    proto.RoutingCmdTypeResponse,
-			NumEntries: uint16(len(updatedEntries)),
-			Entries:    routingEntriesToRipEntries(updatedEntries),
-		}
-		responseBytes, err := response.Marshal()
+		responseBytes, err := node.routingTableToRipResponse()
 		if err != nil {
-			logger.Printf("Error marshaling rip msg: %v\n", err)
+			logger.Println(err)
 			return
 		}
 		node.Send(packet.Header.Src, responseBytes, proto.ProtoNumRIP)
 
 	case proto.RoutingCmdTypeResponse:
-		now := time.Now()
 		entries := ripEntriesToRoutingEntries(msg.Entries, packet.Header.Src)
-		node.RoutingTableMu.Lock()
-		defer node.RoutingTableMu.Unlock()
+		node.updateRoutingTable(entries)
 
-		for _, entry := range entries {
-			oldEntry, ok := node.RoutingTable[entry.Prefix]
-			if ok {
-				oldEntry.updatedAt = now
-				oldEntry.expiryT.Reset(12 * time.Second)
-				if oldEntry.NextHop == packet.Header.Src { // cost update for the same route
-					oldEntry.Cost = entry.Cost
-				} else if oldEntry.Cost > entry.Cost { // better route found
-					oldEntry.NextHop = packet.Header.Src
-					oldEntry.Cost = entry.Cost
-				}
-			} else { // new route
-				node.RoutingTable[entry.Prefix] = entry
-				entry.updatedAt = now
-				entry.expiryT = time.NewTimer(12 * time.Second)
-
-				// spawn a thread to handle expiring for this new entry
-				go func(node *Node, entry *RoutingEntry) {
-					<-entry.expiryT.C
-					node.RoutingTableMu.Lock()
-					delete(node.RoutingTable, entry.Prefix)
-					node.RoutingTableMu.Unlock()
-				}(node, entry)
-			}
-		}
 	default:
 		logger.Printf("Unknown routing command type: %v\n", msg.Command)
 	}
 }
 
 // Send updated routing entries to all RIP neighbors
-func (n *Node) SendRIPUpdate() {
-	updatedEntries := n.getUpdatedEntries()
-	response := proto.RipMsg{
-		Command:    proto.RoutingCmdTypeResponse,
-		NumEntries: uint16(len(updatedEntries)),
-		Entries:    routingEntriesToRipEntries(updatedEntries),
-	}
-	responseBytes, err := response.Marshal()
+func (n *Node) SendRipUpdate() {
+	responseBytes, err := n.routingTableToRipResponse()
 	if err != nil {
-		logger.Printf("Error marshaling rip msg: %v\n", err)
+		logger.Println(err)
 		return
 	}
 	for _, neighbor := range n.ripNeighbors {
@@ -129,7 +90,70 @@ func (n *Node) SendRIPUpdate() {
 	}
 }
 
+// Send rip request to all neighbors. Called at router start up
+func (n *Node) SendRipRequest() {
+	request := proto.RipMsg{
+		Command:    proto.RoutingCmdTypeRequest,
+		NumEntries: 0,
+	}
+	requestBytes, err := request.Marshal()
+	if err != nil {
+		logger.Printf("Error marshaling rip msg: %v\n", err)
+		return
+	}
+	for _, neighbor := range n.ripNeighbors {
+		n.Send(neighbor, requestBytes, proto.ProtoNumRIP)
+	}
+}
+
 /**************************** helper funcs ****************************/
+
+func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
+	now := time.Now()
+	n.RoutingTableMu.Lock()
+	defer n.RoutingTableMu.Unlock()
+
+	for _, entry := range entries {
+		oldEntry, ok := n.RoutingTable[entry.Prefix]
+		if ok {
+			oldEntry.updatedAt = now
+			oldEntry.expiryT.Reset(12 * time.Second)
+			if oldEntry.NextHop == entry.NextHop { // cost update for the same route
+				oldEntry.Cost = entry.Cost
+			} else if entry.Cost < oldEntry.Cost { // better route found
+				oldEntry.NextHop = entry.NextHop
+				oldEntry.Cost = entry.Cost
+			}
+		} else if entry.Cost < proto.INFINITY { // new prefix
+			n.RoutingTable[entry.Prefix] = entry
+			entry.updatedAt = now
+			entry.expiryT = time.NewTimer(12 * time.Second)
+
+			// spawn a thread to handle expiring for this new entry
+			go func(node *Node, entry *RoutingEntry) {
+				<-entry.expiryT.C
+				node.RoutingTableMu.Lock()
+				delete(node.RoutingTable, entry.Prefix)
+				node.RoutingTableMu.Unlock()
+			}(n, entry)
+		}
+	}
+}
+
+// Create and marshal rip response
+func (n *Node) routingTableToRipResponse() ([]byte, error) {
+	updatedEntries := n.getUpdatedEntries()
+	response := &proto.RipMsg{
+		Command:    proto.RoutingCmdTypeResponse,
+		NumEntries: uint16(len(updatedEntries)),
+		Entries:    routingEntriesToRipEntries(updatedEntries),
+	}
+	responseBytes, err := response.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling rip msg: %v", err)
+	}
+	return responseBytes, nil
+}
 
 // Get all routing entries updated after the last sent heartbeat
 func (n *Node) getUpdatedEntries() []*RoutingEntry {

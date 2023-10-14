@@ -28,8 +28,6 @@ func main() {
 		return
 	}
 
-	repl := repl.NewRepl()
-
 	// start listening on each interface
 	for _, i := range host.Interfaces {
 		go func(i *ipnode.Interface) {
@@ -37,5 +35,6 @@ func main() {
 		}(i)
 	}
 
+	repl := repl.NewRepl()
 	repl.Run(host)
 }
