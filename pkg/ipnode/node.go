@@ -9,8 +9,6 @@ import (
 	"net/netip"
 	"os"
 	"sync"
-
-	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
@@ -139,7 +137,7 @@ func (n *Node) ListenOn(i *Interface) {
 		}
 
 		// parse packet header
-		hdr, err := ipv4header.ParseHeader(buf)
+		hdr, err := proto.ParseHeader(buf)
 		if err != nil {
 			logger.Printf("Error parsing header: %v. Dropping the packet...\n", err)
 			continue

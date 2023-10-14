@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"os"
 
-	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -20,7 +19,7 @@ const (
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
 type Packet struct {
-	Header  *ipv4header.IPv4Header
+	Header  *IPv4Header
 	Payload []byte
 }
 
@@ -78,12 +77,12 @@ func ValidateTTL() {
 
 }
 
-func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *ipv4header.IPv4Header {
-	return &ipv4header.IPv4Header{
+func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *IPv4Header {
+	return &IPv4Header{
 		Version:  4,
 		Len:      20, // Header length is always 20 when no IP options provided
 		TOS:      0,
-		TotalLen: ipv4header.HeaderLen + len(msg),
+		TotalLen: HeaderLen + len(msg),
 		ID:       0,
 		Flags:    0,
 		FragOff:  0,
