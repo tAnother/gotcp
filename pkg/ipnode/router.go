@@ -76,7 +76,36 @@ func ripRecvHandler(packet *proto.Packet, node *Node) {
 		node.Send(packet.Header.Src, replyBytes, proto.ProtoNumRIP)
 
 	case proto.RoutingCmdTypeResponse:
-		// TODO
+		now := time.Now()
+		entries := ripEntriesToRoutingEntries(msg.Entries, packet.Header.Src)
+		node.RoutingTableMu.Lock()
+		defer node.RoutingTableMu.Unlock()
+
+		for _, entry := range entries {
+			oldEntry, ok := node.RoutingTable[entry.Prefix]
+			if ok {
+				oldEntry.updatedAt = now
+				oldEntry.expiryT.Reset(12 * time.Second)
+				if oldEntry.NextHop == packet.Header.Src { // same route w/ updated cost
+					oldEntry.Cost = entry.Cost
+				} else if oldEntry.Cost > entry.Cost { // better route found
+					oldEntry.NextHop = packet.Header.Src
+					oldEntry.Cost = entry.Cost
+				}
+			} else {
+				node.RoutingTable[entry.Prefix] = entry
+				entry.updatedAt = now
+				entry.expiryT = time.NewTimer(12 * time.Second)
+
+				// spawn a thread to handle expiring
+				go func(node *Node, entry *RoutingEntry) {
+					<-entry.expiryT.C
+					node.RoutingTableMu.Lock()
+					delete(node.RoutingTable, entry.Prefix)
+					node.RoutingTableMu.Unlock()
+				}(node, entry)
+			}
+		}
 	default:
 		logger.Printf("Unknown routing command type: %v\n", msg.Command)
 	}
@@ -136,7 +165,7 @@ func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) 
 			RouteType: RIP,
 			Prefix:    netip.PrefixFrom(util.Uint32ToIp(r.Address), int(r.Mask)),
 			NextHop:   proposer,
-			Cost:      r.Cost + 1,
+			Cost:      max(r.Cost+1, proto.INFINITY),
 		}
 	}
 	return routingEntries

@@ -61,7 +61,7 @@ type RoutingEntry struct {
 	Cost         uint32
 
 	updatedAt time.Time
-	expiryT   time.Timer
+	expiryT   *time.Timer
 }
 
 // Init a node instance & register handlers
