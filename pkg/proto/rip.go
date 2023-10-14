@@ -5,13 +5,9 @@ import (
 	"iptcp-nora-yu/pkg/util"
 )
 
-type RoutingCmdType uint16
-
 const (
-	RoutingCmdTypeRequest  RoutingCmdType = 1 // for request of routing info
-	RoutingCmdTypeResponse RoutingCmdType = 2
-
-	INFINITY uint32 = 16
+	INFINITY         uint32 = 16
+	ripEntriesOffset int    = 4 // sizeof(command) + sizeof(numEntries)
 )
 
 type RipEntry struct {
@@ -19,6 +15,13 @@ type RipEntry struct {
 	Address uint32 // IP addr
 	Mask    uint32 // subnet mask
 }
+
+type RoutingCmdType uint16
+
+const (
+	RoutingCmdTypeRequest  RoutingCmdType = 1 // for request of routing info
+	RoutingCmdTypeResponse RoutingCmdType = 2
+)
 
 type RipMsg struct {
 	Command    RoutingCmdType
@@ -44,8 +47,8 @@ func (m *RipMsg) Unmarshal(b []byte) error {
 	m.NumEntries = util.BytesToUint16(b[2:4])
 	m.Entries = make([]*RipEntry, m.NumEntries)
 	for i := 0; i < int(m.NumEntries); i++ {
-		buf := b[4+i*12 : 4+(i+1)*12]
-		err := m.Entries[i].Unmarshal(buf[0:12])
+		entryBytes := b[ripEntriesOffset+i*12 : ripEntriesOffset+(i+1)*12]
+		err := m.Entries[i].Unmarshal(entryBytes)
 		if err != nil {
 			return err
 		}
