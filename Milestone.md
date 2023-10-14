@@ -393,16 +393,22 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
     If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
 
     ```Go
+    func (n *Node) CheckExpired(){
+        //for each routing entry in the routing table
+            //check if CurrentTime - LastRefreshTime >= 12
+            //if yes, remove the routing entry from the table and generate ripEntry with Cost = Infinity
+            // send triggered update
+    }
     ```
 
-3. Send RIP packet
+<!-- 3. Send RIP packet 
 
     If the packet is not for this node: `packet.Header.Dst != interface.AssignedIP`
     -  Decrement TTL
     - If TTL  == 0, drop the packet
     - Recompute the checksum
     - Forward the packet to the `routingEntry.nextHop` according to `n.Routingtable`
-    
+     -->
 
 4. Receive RIP packet
     - If the packet is for this node
