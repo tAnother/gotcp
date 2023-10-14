@@ -36,9 +36,7 @@ func main() {
 		}(i)
 	}
 
-	// 3. set up tickers for routing entries?
-
-	// 4. set up a ticker (5s) to send RIP to neighbors (go routines)
+	// set up a ticker (5s) to send RIP to neighbors (go routines)
 
 	repl.Run(router)
 }

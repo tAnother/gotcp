@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"time"
 )
 
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
@@ -20,11 +21,11 @@ type Node struct {
 	ifNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
 	RoutingTableMu sync.RWMutex
-	routingMode    lnxconfig.RoutingMode
 
+	routingMode  lnxconfig.RoutingMode
 	recvHandlers map[uint8]RecvHandlerFunc
 
-	// router specific info
+	// router specific
 	ripNeighbors []netip.Addr
 }
 
@@ -34,7 +35,8 @@ type Interface struct {
 	AssignedPrefix netip.Prefix
 	UDPAddr        netip.AddrPort
 	isDown         bool
-	conn           *net.UDPConn
+
+	conn *net.UDPConn // the udp socket conn used by this interface
 }
 
 type Neighbor struct {
@@ -53,9 +55,13 @@ const (
 
 type RoutingEntry struct {
 	RouteType    RouteType
+	Prefix       netip.Prefix
 	NextHop      netip.Addr // nil if local
 	LocalNextHop string     // interface name. "" if not local
-	Cost         int16
+	Cost         uint32
+
+	updatedAt time.Time
+	expiryT   time.Timer
 }
 
 // Init a node instance & register handlers
@@ -85,6 +91,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 
 		node.RoutingTable[ifcfg.AssignedPrefix] = &RoutingEntry{
 			RouteType:    Local,
+			Prefix:       ifcfg.AssignedPrefix,
 			LocalNextHop: ifcfg.Name,
 			Cost:         0,
 		}
@@ -102,6 +109,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 	for prefix, addr := range config.StaticRoutes {
 		node.RoutingTable[prefix] = &RoutingEntry{
 			RouteType: Static,
+			Prefix:    prefix,
 			NextHop:   addr,
 			Cost:      0, /// there might be better way to represent cost "-". trying to think of some way to associate infinity/maxcost(16) with certain representation...
 		}
@@ -174,35 +182,33 @@ func (n *Node) ListenOn(i *Interface) {
 }
 
 // Send msg to destIP
-func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
+func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error {
 	var srcIF *Interface
 	var srcIP netip.Addr
 	var remoteAddr netip.AddrPort
 	var err error
 
 	switch protoNum {
-	case proto.TestProtoNum:
+	case proto.ProtoNumTest:
 		logger.Println("Sending test packet...")
 		srcIF, remoteAddr, err = n.findLinkLayerSrcDst(destIP)
 		if err != nil {
 			return err
 		}
 		srcIP = srcIF.AssignedIP
-	case proto.RIPProtoNum:
+	case proto.ProtoNumRIP:
 		logger.Println("Sending rip packet...")
 		// nextHop := nil //TODO for RIP
 	default:
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
-	packet := proto.NewPacket(srcIP, destIP, []byte(msg), protoNum)
+	packet := proto.NewPacket(srcIP, destIP, msg, protoNum)
 	err = n.forwardPacket(srcIF, remoteAddr, packet)
 	return err
 }
 
 // Turn up/turn down an interface:
-// 1. Update interface info
-// TODO: For routers: Notify rip neighbors (maybe we need 2 versions)
 func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 	iface, ok := n.Interfaces[ifname]
 	if !ok {
