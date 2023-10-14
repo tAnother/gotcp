@@ -100,7 +100,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 		node.RoutingTable[prefix] = &RoutingEntry{
 			RouteType: Static,
 			NextHop:   addr,
-			Cost:      0,
+			Cost:      0, /// there might be better way to represent cost "-". trying to think of some way to associate infinity/maxcost(16) with certain representation...
 		}
 	}
 
@@ -143,6 +143,12 @@ func (n *Node) ListenOn(i *Interface) {
 			continue
 		}
 
+		//if packet is not for this interface and TTL reaches 0, drop the packet
+		if !isForInterface(i, hdr) && hdr.TTL-1 == 0 {
+			logger.Printf("Packet is not for interface with IP %v and TTL reaches 0. Dropping the packet...\n", i.AssignedIP)
+			continue
+		}
+
 		// validate checksum
 		checksumFromHeader := uint16(hdr.Checksum)
 		if checksumFromHeader != proto.ValidateChecksum(buf[:hdr.Len], checksumFromHeader) {
@@ -175,6 +181,7 @@ func (n *Node) Send(destIP netip.Addr, msg string, protoNum uint8) error {
 		if err != nil {
 			return err
 		}
+		srcIP = srcIF.AssignedIP
 	case proto.RIPProtoNum:
 		logger.Println("Sending rip packet...")
 		// nextHop := nil //TODO for RIP
@@ -296,8 +303,13 @@ func (n *Node) findLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPor
 	if !altDestIP.IsValid() {
 		altDestIP = destIP
 	}
-
 	srcIF := n.Interfaces[nextHop.LocalNextHop]
+	//if it's for this local interface
+	if srcIF.AssignedIP == destIP {
+		return srcIF, srcIF.UDPAddr, nil
+	}
+
+	//if it's for the nbhr of this local interface, find the neighbor
 	nbhr := n.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
 	if nbhr == nil {
 		return nil, netip.AddrPort{}, fmt.Errorf("DestIP not found in the neighbors of %v", nextHop.LocalNextHop)
@@ -387,4 +399,8 @@ func (rt *RoutingEntry) getNextHopString() string {
 
 func (rt *RoutingEntry) getCostString() string {
 	return fmt.Sprint(rt.Cost)
+}
+
+func isForInterface(i *Interface, hdr *proto.IPv4Header) bool {
+	return hdr.Dst == i.AssignedIP
 }
