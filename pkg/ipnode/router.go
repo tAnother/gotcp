@@ -155,7 +155,9 @@ func (n *Node) routingTableToRipResponse() ([]byte, error) {
 	return responseBytes, nil
 }
 
-// Get all routing entries updated after the last sent heartbeat
+// Return all routing entries that need to be sent to rip neighbors:
+// 1) entries updated after the last sent heartbeat
+// 2) local entries for node's own running interfaces
 func (n *Node) getUpdatedEntries() []*RoutingEntry {
 	var entries []*RoutingEntry
 	n.RoutingTableMu.RLock()
@@ -163,7 +165,8 @@ func (n *Node) getUpdatedEntries() []*RoutingEntry {
 
 	lastHeartbeat := time.Now().Add(-5 * time.Second)
 	for _, r := range n.RoutingTable {
-		if r.updatedAt.After(lastHeartbeat) {
+		if r.updatedAt.After(lastHeartbeat) ||
+			(r.RouteType == Local && !n.Interfaces[r.LocalNextHop].isDown) {
 			entries = append(entries, r)
 		}
 	}
