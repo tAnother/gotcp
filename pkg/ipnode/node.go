@@ -17,7 +17,7 @@ type RecvHandlerFunc func(packet *proto.Packet, node *Node)
 
 type Node struct {
 	Interfaces     map[string]*Interface          // interface name -> interface instance
-	ifNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface  /// considering making this private
+	ifNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
 	RoutingTableMu sync.RWMutex
 
@@ -100,7 +100,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 		node.RoutingTable[prefix] = &RoutingEntry{
 			RouteType: Static,
 			NextHop:   addr,
-			Cost:      -1, /// there might be better way to represent cost "-". trying to think of some way to associate infinity/maxcost(16) with certain representation...
+			Cost:      0,
 		}
 	}
 
@@ -386,8 +386,5 @@ func (rt *RoutingEntry) getNextHopString() string {
 }
 
 func (rt *RoutingEntry) getCostString() string {
-	if rt.Cost == -1 {
-		return "-"
-	}
 	return fmt.Sprint(rt.Cost)
 }
