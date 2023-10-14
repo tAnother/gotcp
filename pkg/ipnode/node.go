@@ -183,27 +183,15 @@ func (n *Node) ListenOn(i *Interface) {
 
 // Send msg to destIP
 func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error {
-	var srcIF *Interface
-	var srcIP netip.Addr
-	var remoteAddr netip.AddrPort
-	var err error
-
-	switch protoNum {
-	case proto.ProtoNumTest:
-		logger.Println("Sending test packet...")
-		srcIF, remoteAddr, err = n.findLinkLayerSrcDst(destIP)
-		if err != nil {
-			return err
-		}
-		srcIP = srcIF.AssignedIP
-	case proto.ProtoNumRIP:
-		logger.Println("Sending rip packet...")
-		// nextHop := nil //TODO for RIP
-	default:
+	if protoNum != proto.ProtoNumRIP && protoNum != proto.ProtoNumTest {
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
-	packet := proto.NewPacket(srcIP, destIP, msg, protoNum)
+	srcIF, remoteAddr, err := n.findLinkLayerSrcDst(destIP)
+	if err != nil {
+		return err
+	}
+	packet := proto.NewPacket(srcIF.AssignedIP, destIP, msg, protoNum)
 	err = n.forwardPacket(srcIF, remoteAddr, packet)
 	return err
 }
@@ -324,7 +312,7 @@ func (n *Node) findLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPor
 	// if it's for the nbhr of this local interface, find the neighbor
 	nbhr := n.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
 	if nbhr == nil {
-		return nil, netip.AddrPort{}, fmt.Errorf("DestIP not found in the neighbors of %v", nextHop.LocalNextHop)
+		return nil, netip.AddrPort{}, fmt.Errorf("destIP not found in the neighbors of %v", nextHop.LocalNextHop)
 	}
 	return srcIF, nbhr.UDPAddr, nil
 }
@@ -377,10 +365,6 @@ func (n *Node) findNextHopNeighbor(ifName string, nexthopIP netip.Addr) *Neighbo
 		}
 	}
 	return nil
-}
-
-func updateRoutingtable() { // params TBD
-
 }
 
 func (i *Interface) getIsDownString() string {
