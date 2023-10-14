@@ -6,6 +6,7 @@ import (
 	"iptcp-nora-yu/pkg/ipnode"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/repl"
+	"time"
 )
 
 func main() {
@@ -36,7 +37,13 @@ func main() {
 		}(i)
 	}
 
-	// set up a ticker (5s) to send RIP to neighbors (go routines)
+	// set up a ticker (5s) to send RIP to neighbors
+	go func(router *ipnode.Node) {
+		ticker := time.NewTicker(5 * time.Second)
+		for range ticker.C {
+			router.SendRIPUpdate()
+		}
+	}(router)
 
 	repl.Run(router)
 }
