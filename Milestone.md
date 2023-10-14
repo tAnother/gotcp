@@ -331,7 +331,12 @@ func sendHandler(input string, replConfig *REPLConfig)
 
 ### Phase 2: RIP
 
-1. Send Update
+See this [post](https://edstem.org/us/courses/45889/discussion/3629449) and [this](https://edstem.org/us/courses/45889/discussion/3629059) for encapsulating RIP msg.
+
+1. Send Update Spec
+
+    See this [post](https://edstem.org/us/courses/45889/discussion/3630914) for details.
+
 ```Go
 // Sends periodic RIP updates to the neighbors every 5 sec
 func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
@@ -351,22 +356,27 @@ func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
 } 
 
 func (n *Node) sendRipRequest(){
-   // for each interface of the router
+   // for each interface [i] of the router
         // Marshal RIP msg to []bytes
+        ripMsg := &RIPMsg{Command: RoutingCmdTypeRequest}
         // Wrap it into Packet
-        // Send the packet to the interface UDP?
+        bytesToSend, err := ripMsg.Marshal()
+        // Send the packet to the interface's neighbors [n]
+            n.Send(destIP, msg, 200) // we might need to change msg type from string to byte
 }
 
 func (n *Node) sendUpdateToNeighbors(){
-    // 1. get rip data from the node
-    // 2. for each interface f of the router
-            // 2.1. for each rip entry, update the cost using split horizon and poison reverse
-                // If rip entry and the interface f belongs to the same subnet and the cost is not 0
-                // It means this node does not have better knowledge about interface f than the neighboring node. So we should set the ripEntry cost to infinity 
+    // 1. get ripmsg from the node
+    ripMsg := n.routingTableToRipMsg()
+        // 2. for each rip entry, update the cost using split horizon and poison reverse
+            // if rt.NextHop is one of the neighbors and the cost is not 0
+                // It means this node does not have better knowledge about the destatination than the neighboring node. So we should set the corresponding ripEntry's cost to infinity 
         // 3. Marshal the ripMsg
         // 4. Wrap it to the packet
-        // 5. Send the packet to the interface UDP
+        // 5. Send the packet to the neighbor interface
 }
+
+func (n *Node) routingTableToRipMsg() *RIPMsg{}
 
 //should be triggered whenever a interface's state is chanegd
 func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be similar to sendUpdateToNeighbors. 
@@ -374,7 +384,16 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
 
 2. Expire routing entry
 
-    We should another field for `RoutingEntry`  (maybe `LastRefreshTime time.Time`). If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
+    We should another field for `RoutingEntry`  (maybe `LastRefreshTime time.Time`). 
+    
+    Check out this [post](https://edstem.org/us/courses/45889/discussion/3634129) for details.
+
+    It's sufficient to have a thread that checks the whole routing table every N seconds (where N < 12), looks for entries that have expired, and then removes the routes and sends a triggered update if necessary.
+    
+    If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
+
+    ```Go
+    ```
 
 3. Send RIP packet
 
@@ -393,7 +412,11 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
             - Unmarshall
             - Validation
             - For each ripEntry, log to stdout: `Received rip packet: Src: {src}, Dst: {dest}, TTL:{TTL}, Data:{msg}, Cost :{cost}`
-            - If Request Command: send out?
+            - If Request Command: 
+
+                a. The node should respond with a RIP response that contains the full routing table (just like a standard periodic update). \
+                b. The node should add `R` type routing entry to the table with the received RIP msg.
+
             - If Response Command: update the routing table
 
             ```Go
