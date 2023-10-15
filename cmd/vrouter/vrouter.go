@@ -41,7 +41,15 @@ func main() {
 	go func(router *ipnode.Node) {
 		ticker := time.NewTicker(5 * time.Second)
 		for range ticker.C {
-			router.SendRipUpdate()
+			router.SendPeriodicRipUpdate()
+		}
+	}(router)
+
+	// routing table garbage collection
+	go func(router *ipnode.Node) {
+		ticker := time.NewTicker(10 * time.Second)
+		for range ticker.C {
+			router.RemoveExpiredEntries()
 		}
 	}(router)
 

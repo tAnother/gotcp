@@ -62,7 +62,7 @@ func ripRecvHandler(packet *proto.Packet, node *Node) {
 			logger.Printf("RIP request must have 0 num entries.\n")
 			return
 		}
-		responseBytes, err := node.routingTableToRipResponse()
+		responseBytes, err := node.createRipResponse(node.getAllEntries())
 		if err != nil {
 			logger.Println(err)
 			return
@@ -75,18 +75,6 @@ func ripRecvHandler(packet *proto.Packet, node *Node) {
 
 	default:
 		logger.Printf("Unknown routing command type: %v\n", msg.Command)
-	}
-}
-
-// Send updated routing entries to all RIP neighbors
-func (n *Node) SendRipUpdate() {
-	responseBytes, err := n.routingTableToRipResponse()
-	if err != nil {
-		logger.Println(err)
-		return
-	}
-	for _, neighbor := range n.ripNeighbors {
-		n.Send(neighbor, responseBytes, proto.ProtoNumRIP)
 	}
 }
 
@@ -106,12 +94,36 @@ func (n *Node) SendRipRequest() {
 	}
 }
 
+// Send periodic updates to all RIP neighbors
+func (n *Node) SendPeriodicRipUpdate() {
+	n.sendRipUpdate(n.getAllEntries())
+}
+
+// Remove expried entries from the routing table and send update to RIP neighbors
+func (n *Node) RemoveExpiredEntries() {
+	var updated []*RoutingEntry
+	n.RoutingTableMu.Lock()
+	defer n.RoutingTableMu.Unlock()
+
+	expiry := time.Now().Add(-12 * time.Second)
+	for prefix, r := range n.RoutingTable {
+		if r.RouteType == RIP && r.UpdatedAt.Before(expiry) {
+			r.Cost = proto.INFINITY
+			updated = append(updated, r)
+			delete(n.RoutingTable, prefix)
+		}
+	}
+
+	n.sendRipUpdate(updated)
+}
+
 /**************************** helper funcs ****************************/
 
 func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 	now := time.Now()
 	n.RoutingTableMu.Lock()
 	defer n.RoutingTableMu.Unlock()
+	var updated []*RoutingEntry
 
 	for _, entry := range entries {
 		oldEntry, ok := n.RoutingTable[entry.Prefix]
@@ -119,37 +131,43 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 			continue
 		}
 		if ok {
-			oldEntry.updatedAt = now
-			oldEntry.expiryT.Reset(12 * time.Second)
+			oldEntry.UpdatedAt = now
 			if oldEntry.NextHop == entry.NextHop { // cost update for the same route
 				oldEntry.Cost = entry.Cost
+				updated = append(updated, oldEntry)
 			} else if entry.Cost < oldEntry.Cost { // better route found
 				oldEntry.NextHop = entry.NextHop
 				oldEntry.Cost = entry.Cost
+				updated = append(updated, oldEntry)
 			}
 		} else if entry.Cost < proto.INFINITY { // new prefix
 			n.RoutingTable[entry.Prefix] = entry
-			entry.updatedAt = now
-			entry.expiryT = time.NewTimer(12 * time.Second)
-
-			// spawn a thread to handle expiring for this new entry
-			go func(node *Node, entry *RoutingEntry) {
-				<-entry.expiryT.C
-				node.RoutingTableMu.Lock()
-				delete(node.RoutingTable, entry.Prefix)
-				node.RoutingTableMu.Unlock()
-			}(n, entry)
+			entry.UpdatedAt = now
+			updated = append(updated, entry)
 		}
+	}
+
+	n.sendRipUpdate(updated)
+}
+
+// Send RIP update containing entries to all RIP neighbors
+func (n *Node) sendRipUpdate(entries []*RoutingEntry) {
+	responseBytes, err := n.createRipResponse(entries)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+	for _, neighbor := range n.ripNeighbors {
+		n.Send(neighbor, responseBytes, proto.ProtoNumRIP)
 	}
 }
 
 // Create and marshal rip response
-func (n *Node) routingTableToRipResponse() ([]byte, error) {
-	updatedEntries := n.getUpdatedEntries()
+func (n *Node) createRipResponse(entries []*RoutingEntry) ([]byte, error) {
 	response := &proto.RipMsg{
 		Command:    proto.RoutingCmdTypeResponse,
-		NumEntries: uint16(len(updatedEntries)),
-		Entries:    routingEntriesToRipEntries(updatedEntries),
+		NumEntries: uint16(len(entries)),
+		Entries:    routingEntriesToRipEntries(entries),
 	}
 	responseBytes, err := response.Marshal()
 	if err != nil {
@@ -158,17 +176,11 @@ func (n *Node) routingTableToRipResponse() ([]byte, error) {
 	return responseBytes, nil
 }
 
-// Return all routing entries that need to be sent to rip neighbors:
-// 1) entries updated after the last sent heartbeat
-// 2) local entries for node's own running interfaces
-func (n *Node) getUpdatedEntries() []*RoutingEntry {
+// All local & remote entries in the routing table
+func (n *Node) getAllEntries() []*RoutingEntry {
 	var entries []*RoutingEntry
-	n.RoutingTableMu.RLock()
-	defer n.RoutingTableMu.RUnlock()
-
-	lastHeartbeat := time.Now().Add(-5 * time.Second)
 	for _, r := range n.RoutingTable {
-		if r.updatedAt.After(lastHeartbeat) ||
+		if r.RouteType == RIP ||
 			(r.RouteType == Local && !n.Interfaces[r.LocalNextHop].isDown) {
 			entries = append(entries, r)
 		}

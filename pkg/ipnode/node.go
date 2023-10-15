@@ -62,8 +62,7 @@ type RoutingEntry struct {
 	LocalNextHop string     // interface name. "" if not local
 	Cost         uint32
 
-	updatedAt time.Time
-	expiryT   *time.Timer
+	UpdatedAt time.Time
 }
 
 // Init a node instance & register handlers
@@ -113,7 +112,7 @@ func newNode(config *lnxconfig.IPConfig) (*Node, error) {
 			RouteType: Static,
 			Prefix:    prefix,
 			NextHop:   addr,
-			Cost:      0, /// there might be better way to represent cost "-". trying to think of some way to associate infinity/maxcost(16) with certain representation...
+			Cost:      0,
 		}
 	}
 
