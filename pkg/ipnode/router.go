@@ -182,9 +182,17 @@ func (n *Node) createRipResponse(entries []*RoutingEntry, dest netip.Addr) ([]by
 func (n *Node) getAllEntries() []*RoutingEntry {
 	var entries []*RoutingEntry
 	for _, r := range n.RoutingTable {
-		if r.RouteType == RIP ||
-			(r.RouteType == Local && !n.Interfaces[r.LocalNextHop].isDown) {
+		if r.RouteType == RIP {
 			entries = append(entries, r)
+		} else if r.RouteType == Local {
+			if n.Interfaces[r.LocalNextHop].isDown { // interface is down - set cost to infinity
+				entries = append(entries, &RoutingEntry{
+					Prefix: r.Prefix,
+					Cost:   proto.INFINITY,
+				})
+			} else {
+				entries = append(entries, r)
+			}
 		}
 	}
 	return entries
