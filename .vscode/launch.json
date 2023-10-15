@@ -6,21 +6,22 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "$./cmd/vhost",
+            "program": "${workspaceFolder}/cmd/vhost/vhost.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "doc-example/h1.lnx"]
+            "args": ["--config", "networks/doc-example/h1.lnx"]
 
         },
         {
-            "name": "Run vrouter (example)",
+            "name": "Run router (example)",
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "$./cmd/vrouter",
+            "program": "${workspaceFolder}/cmd/vrouter/vrouter.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "doc-example/r1.lnx"]
+            "args": ["--config", "networks/doc-example/r1.lnx"]
+
         }
     ]
 }
