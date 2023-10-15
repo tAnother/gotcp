@@ -31,9 +31,17 @@
     For r5, the next hop of 10.1.0.0 is 10.4.0.1 with cost 2 in the ref prog, but ours has 10.5.0.2 with cost 2. We do not need to worry about it. See this [post](https://edstem.org/us/courses/45889/discussion/3641481).
 
 
-5. **[TESTING]**  If an interface is down, the neighbors should update the routing table if there are other available routes:
+5. **[BUG]**  If an interface is down, the neighbors should update the routing table if there are other available routes:
     > loop reference: if0 of r2 is down\
     <img src="md_images/loop_down.png" alt="drawing" width="500"/>
+
+    **BUG**\
+    r2 does not update the routing table accordingly.
+    | Prefix         | Expected Next Hop    | Expected Cost |  Actual Next Hop    | Actual Cost |
+    |--------------|------------|-------------| -------------| -------------|
+    | 10.3.0.0/24 | 10.2.0.2  | 3   | 10.1.0.1 | 1 |
+    | 10.0.0.0/24 | 10.2.0.2  | 4   | 10.1.0.1 | 1 |
+    | 10.4.0.0/24 | 10.2.0.2  | 2   | 10.1.0.1 | 2 |
 
 
 
