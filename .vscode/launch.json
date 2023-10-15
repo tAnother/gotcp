@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run vhost (example)",
+            "name": "Run h1 (linear-r2h2)",
             "type": "go",
             "request": "launch",
             "mode": "auto",
@@ -13,7 +13,7 @@
 
         },
         {
-            "name": "Run router (example)",
+            "name": "Run r2 (linear-r2h2)",
             "type": "go",
             "request": "launch",
             "mode": "auto",
@@ -21,6 +21,16 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": ["--config", "networks/linear-r2h2/r2.lnx"]
+        },
+        {
+            "name": "Run r1 (linear-r2h2)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/vrouter/vrouter.go",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": ["--config", "networks/linear-r2h2/r1.lnx"]
 
         }
     ]

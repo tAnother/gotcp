@@ -46,8 +46,8 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 }
 
 func ripRecvHandler(packet *proto.Packet, node *Node) {
-	fmt.Printf("Received rip packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
-		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
+	// fmt.Printf("Received rip packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
+	// 	packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
 
 	msg := new(proto.RipMsg)
 	err := msg.Unmarshal(packet.Payload)
@@ -115,6 +115,9 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 
 	for _, entry := range entries {
 		oldEntry, ok := n.RoutingTable[entry.Prefix]
+		if ok && oldEntry.RouteType != RIP { // we do not care about local or static routes
+			continue
+		}
 		if ok {
 			oldEntry.updatedAt = now
 			oldEntry.expiryT.Reset(12 * time.Second)
@@ -192,7 +195,7 @@ func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) 
 			RouteType: RIP,
 			Prefix:    netip.PrefixFrom(util.Uint32ToIp(r.Address), int(r.Mask)),
 			NextHop:   proposer,
-			Cost:      max(r.Cost+1, proto.INFINITY),
+			Cost:      min(r.Cost+1, proto.INFINITY),
 		}
 	}
 	return routingEntries

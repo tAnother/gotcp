@@ -15,11 +15,11 @@
 1. Should have all of the test packet capabilities;
 2. Should be able to update `R` routing entry at the beginning:
 
-    > r2h2 example\
+    > r2h2 reference\
     <img src="md_images/image.png" alt="drawing" width="300"/>
-    <img src="md_images/image-1.png" alt="drawing" width="300"/>
 
 ## RIP debug changelog
 
 10.15 Fix nil pointer issue in RipMsg.UnMarshal
 
+10.15 Fix updateRoutingTable: skip any updates for local or static routes; costs should choose the minimum value.
