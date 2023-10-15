@@ -41,3 +41,5 @@
 10.15 Fix nil pointer issue in RipMsg.UnMarshal
 
 10.15 Fix updateRoutingTable: skip any updates for local or static routes; costs should choose the minimum value.
+
+10.16 Fix racing condition on `node.ListenOn()`: disassemble `ListenOn(interface)` to `BindUDP()` which binds all of the interfaces to the designated UDP port and then starts listening on each port.

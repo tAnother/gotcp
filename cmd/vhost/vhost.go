@@ -29,10 +29,9 @@ func main() {
 	}
 
 	// start listening on each interface
+	host.BindUDP()
 	for _, i := range host.Interfaces {
-		go func(i *ipnode.Interface) {
-			host.ListenOn(i) /// need to exit if conn initialization fails?
-		}(i)
+		go host.ListenOn(i)
 	}
 
 	repl := repl.NewRepl()

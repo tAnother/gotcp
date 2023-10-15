@@ -126,21 +126,24 @@ func (n *Node) RegisterRecvHandler(protoNum uint8, callbackFunc RecvHandlerFunc)
 	n.recvHandlers[protoNum] = callbackFunc
 }
 
+func (n *Node) BindUDP() {
+	for _, i := range n.Interfaces {
+		listenAddr := net.UDPAddrFromAddrPort(i.UDPAddr)
+		conn, err := net.ListenUDP("udp4", listenAddr)
+		if err != nil {
+			logger.Printf("Could not bind to UDP port: %v\n", err)
+			return
+		}
+		i.conn = conn
+		logger.Printf("Listening on interface %v with udp %v ...\n", i.Name, i.conn.LocalAddr().String())
+	}
+}
+
 // Listen on designated interface, receive & unmarshal packets, then dispatch them to specific handlers
 func (n *Node) ListenOn(i *Interface) {
-	listenAddr := net.UDPAddrFromAddrPort(i.UDPAddr)
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		logger.Printf("Could not bind to UDP port: %v\n", err)
-		return
-	}
-	i.conn = conn
-
-	logger.Printf("Listening on interface %v...\n", i.Name)
-
 	for {
 		buf := make([]byte, proto.MTU)
-		_, _, err := conn.ReadFromUDP(buf)
+		_, _, err := i.conn.ReadFromUDP(buf)
 		if err != nil {
 			logger.Printf("Error reading from UDP socket: %v\n", err)
 			return
@@ -157,7 +160,7 @@ func (n *Node) ListenOn(i *Interface) {
 		}
 
 		hdr.TTL--
-		logger.Printf("Received packet: Src: %s, Dst: %s, TTL: %d\n", hdr.Src, hdr.Dst, hdr.TTL)
+		// logger.Printf("Received packet: Src: %s, Dst: %s, TTL: %d, ProtoNum: %v\n", hdr.Src, hdr.Dst, hdr.TTL, hdr.Protocol)
 
 		// if packet is not for this interface and TTL reaches 0, drop the packet
 		if !isForInterface(i, hdr) && hdr.TTL <= 0 {
@@ -262,7 +265,7 @@ func (n *Node) forwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto
 		return nil
 	}
 	if srcIF.conn == nil {
-		logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
+		// logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
 		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
 		conn, err := net.ListenUDP("udp4", listenAddr)
 		if err != nil {
@@ -287,18 +290,18 @@ func (n *Node) forwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto
 	}
 
 	// Send the message to the "link-layer" addr:port on UDP
-	bytesWritten, err := srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
+	_, err = srcIF.conn.WriteToUDP(bytesToSend, udpAddr)
 	if err != nil {
 		return fmt.Errorf("error writing to socket: %v", err)
 	}
-	logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
+	// logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
 	return nil
 }
 
 // Return the link layer src (interface) and dest (remote addr)
 func (n *Node) findLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) {
 	nextHop, altDestIP := n.findNextHopEntry(destIP)
-	logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
+	// logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
 	if nextHop == nil || nextHop.LocalNextHop == "" {
 		return nil, netip.AddrPort{}, fmt.Errorf("error finding local next hop for the test packet")
 	}

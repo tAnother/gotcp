@@ -29,10 +29,9 @@ func main() {
 	}
 
 	// start listening on each interface
+	router.BindUDP()
 	for _, i := range router.Interfaces {
-		go func(i *ipnode.Interface) {
-			router.ListenOn(i)
-		}(i)
+		go router.ListenOn(i)
 	}
 
 	// send out request to fill routing table
