@@ -10,6 +10,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
@@ -148,7 +150,7 @@ func (n *Node) ListenOn(i *Interface) {
 		}
 
 		// parse packet header
-		hdr, err := proto.ParseHeader(buf)
+		hdr, err := ipv4header.ParseHeader(buf)
 		if err != nil {
 			logger.Printf("Error parsing header: %v. Dropping the packet...\n", err)
 			continue
@@ -397,6 +399,6 @@ func (rt *RoutingEntry) getCostString() string {
 	return fmt.Sprint(rt.Cost)
 }
 
-func isForInterface(i *Interface, hdr *proto.IPv4Header) bool {
+func isForInterface(i *Interface, hdr *ipv4header.IPv4Header) bool {
 	return hdr.Dst == i.AssignedIP
 }
