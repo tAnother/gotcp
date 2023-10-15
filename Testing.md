@@ -15,8 +15,6 @@
 1. Should have all of the test packet capabilities;
 2. **[PASS]** Should be able to update `R` routing entry at the beginning immediately;
 
-    ours is a bit slower, but the logic is correct
-
     > r2h2 reference\
     <img src="md_images/lr_start.png" alt="drawing" width="500"/>
 
@@ -25,9 +23,12 @@
     <img src="md_images/link_down.png" alt="drawing" width="500"/>
 
 
-4. **[TESTING]** For each `R` routing entry, it should always has the lowest-cost path:
+4. **[PASS]** For each `R` routing entry, it should always has the lowest-cost path:
      > loop reference\
     <img src="md_images/lowest_cost.png" alt="drawing" width="500"/>
+
+    **Clarification**
+    For r5, the next hop of 10.1.0.0 is 10.4.0.1 with cost 2 in the ref prog, but ours has 10.5.0.2 with cost 2. We do not need to worry about it. See this [post](https://edstem.org/us/courses/45889/discussion/3641481).
 
 
 5. **[TESTING]**  If an interface is down, the neighbors should update the routing table if there are other available routes:
