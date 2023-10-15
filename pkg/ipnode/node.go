@@ -58,7 +58,7 @@ const (
 type RoutingEntry struct {
 	RouteType    RouteType
 	Prefix       netip.Prefix
-	NextHop      netip.Addr // nil if local
+	NextHop      netip.Addr // 0 if local
 	LocalNextHop string     // interface name. "" if not local
 	Cost         uint32
 

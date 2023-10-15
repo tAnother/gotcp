@@ -62,7 +62,7 @@ func ripRecvHandler(packet *proto.Packet, node *Node) {
 			logger.Printf("RIP request must have 0 num entries.\n")
 			return
 		}
-		responseBytes, err := node.createRipResponse(node.getAllEntries())
+		responseBytes, err := node.createRipResponse(node.getAllEntries(), packet.Header.Src)
 		if err != nil {
 			logger.Println(err)
 			return
@@ -152,22 +152,24 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 
 // Send RIP update containing entries to all RIP neighbors
 func (n *Node) sendRipUpdate(entries []*RoutingEntry) {
-	responseBytes, err := n.createRipResponse(entries)
-	if err != nil {
-		logger.Println(err)
+	if len(entries) == 0 {
 		return
 	}
 	for _, neighbor := range n.ripNeighbors {
+		responseBytes, err := n.createRipResponse(entries, neighbor)
+		if err != nil {
+			logger.Println(err)
+		}
 		n.Send(neighbor, responseBytes, proto.ProtoNumRIP)
 	}
 }
 
 // Create and marshal rip response
-func (n *Node) createRipResponse(entries []*RoutingEntry) ([]byte, error) {
+func (n *Node) createRipResponse(entries []*RoutingEntry, dest netip.Addr) ([]byte, error) {
 	response := &proto.RipMsg{
 		Command:    proto.RoutingCmdTypeResponse,
 		NumEntries: uint16(len(entries)),
-		Entries:    routingEntriesToRipEntries(entries),
+		Entries:    routingEntriesToRipEntries(entries, dest),
 	}
 	responseBytes, err := response.Marshal()
 	if err != nil {
@@ -188,13 +190,17 @@ func (n *Node) getAllEntries() []*RoutingEntry {
 	return entries
 }
 
-func routingEntriesToRipEntries(entries []*RoutingEntry) []*proto.RipEntry {
+func routingEntriesToRipEntries(entries []*RoutingEntry, dest netip.Addr) []*proto.RipEntry {
 	ripEntries := make([]*proto.RipEntry, len(entries))
 	for i, r := range entries {
 		ripEntries[i] = &proto.RipEntry{
-			Cost:    uint32(r.Cost),
 			Address: util.IpToUint32(r.Prefix.Addr()),
 			Mask:    uint32(r.Prefix.Bits()),
+		}
+		if r.NextHop == dest { // sending back to the original proposer - employ split horizon with poisoned reverse
+			ripEntries[i].Cost = proto.INFINITY
+		} else {
+			ripEntries[i].Cost = uint32(r.Cost)
 		}
 	}
 	return ripEntries
