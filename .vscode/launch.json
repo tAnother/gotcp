@@ -9,7 +9,7 @@
             "program": "${workspaceFolder}/cmd/vhost/vhost.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "networks/doc-example/h1.lnx"]
+            "args": ["--config", "networks/linear-r2h2/h1.lnx"]
 
         },
         {
@@ -20,7 +20,7 @@
             "program": "${workspaceFolder}/cmd/vrouter/vrouter.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "networks/doc-example/r1.lnx"]
+            "args": ["--config", "networks/linear-r2h2/r2.lnx"]
 
         }
     ]

@@ -48,6 +48,7 @@ func (m *RipMsg) Unmarshal(b []byte) error {
 	m.Entries = make([]*RipEntry, m.NumEntries)
 	for i := 0; i < int(m.NumEntries); i++ {
 		entryBytes := b[ripEntriesOffset+i*12 : ripEntriesOffset+(i+1)*12]
+		m.Entries[i] = new(RipEntry)
 		err := m.Entries[i].Unmarshal(entryBytes)
 		if err != nil {
 			return err
