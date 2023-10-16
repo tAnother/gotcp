@@ -1,5 +1,7 @@
-The plan:
+Changes:
+1. Sort vrouter and vhost specific logic into separate packages.
+2. Decouple REPL & ipnode
+3. Put utils into separate packages
 
-1. Move host/router and any upper layer specific logic out of ipnode(ipstack)?
-2. Tidy up private/public fields
-3. Integrate util into router?
+Planned(?):
+4. Should different protocols live in different packages?
