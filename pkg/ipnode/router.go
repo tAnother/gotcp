@@ -198,7 +198,7 @@ func routingEntriesToRipEntries(entries []*RoutingEntry, dest netip.Addr) []*pro
 	for i, r := range entries {
 		ripEntries[i] = &proto.RipEntry{
 			Address: util.IpToUint32(r.Prefix.Addr()),
-			Mask:    uint32(r.Prefix.Bits()),
+			Mask:    util.PrefixLenToIPMask(r.Prefix.Bits()),
 		}
 		if r.NextHop == dest { // sending back to the original proposer - employ split horizon with poisoned reverse
 			ripEntries[i].Cost = proto.INFINITY
@@ -214,7 +214,7 @@ func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) 
 	for i, r := range entries {
 		routingEntries[i] = &RoutingEntry{
 			RouteType: RIP,
-			Prefix:    netip.PrefixFrom(util.Uint32ToIp(r.Address), int(r.Mask)),
+			Prefix:    netip.PrefixFrom(util.Uint32ToIp(r.Address), util.IPMaskToPrefixLen(r.Mask)),
 			NextHop:   proposer,
 			Cost:      min(r.Cost+1, proto.INFINITY),
 		}

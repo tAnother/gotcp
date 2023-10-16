@@ -13,7 +13,7 @@ const (
 type RipEntry struct {
 	Cost    uint32 // <= 16. we define INFINITY to be 16
 	Address uint32 // IP addr
-	Mask    uint32 // subnet mask // TODO: currently in the form of 16 but should be in the form of 255.255.0.0
+	Mask    uint32 // subnet mask
 }
 
 type RoutingCmdType uint16
