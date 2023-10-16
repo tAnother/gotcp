@@ -346,8 +346,6 @@ func (n *Node) findNextHopEntry(destIP netip.Addr) (entry *RoutingEntry, altAddr
 }
 
 func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix {
-	n.RoutingTableMu.RLock()
-	defer n.RoutingTableMu.RUnlock()
 	var longestPrefix netip.Prefix
 	maxLength := 0
 	for prefix := range n.RoutingTable {

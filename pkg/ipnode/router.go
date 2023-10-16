@@ -103,7 +103,6 @@ func (n *Node) SendPeriodicRipUpdate() {
 func (n *Node) RemoveExpiredEntries() {
 	var updated []*RoutingEntry
 	n.RoutingTableMu.Lock()
-	defer n.RoutingTableMu.Unlock()
 
 	expiry := time.Now().Add(-12 * time.Second)
 	for prefix, r := range n.RoutingTable {
@@ -114,6 +113,7 @@ func (n *Node) RemoveExpiredEntries() {
 		}
 	}
 
+	n.RoutingTableMu.Unlock()
 	n.sendRipUpdate(updated)
 }
 
@@ -121,9 +121,8 @@ func (n *Node) RemoveExpiredEntries() {
 
 func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 	now := time.Now()
-	n.RoutingTableMu.Lock()
-	defer n.RoutingTableMu.Unlock()
 	var updated []*RoutingEntry
+	n.RoutingTableMu.Lock()
 
 	for _, entry := range entries {
 		oldEntry, ok := n.RoutingTable[entry.Prefix]
@@ -147,6 +146,7 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 		}
 	}
 
+	n.RoutingTableMu.Unlock()
 	n.sendRipUpdate(updated)
 }
 
