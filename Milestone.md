@@ -347,11 +347,8 @@ func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
    // 3. Periodic sendUpdateToNeighbors
    ticker := time.NewTicker(util.RIP_COOLDOWN)
    defer ticker.Stop()
-   for {
-        select{
-            case <- ticker.C:
-                node.sendUpdateToNeighbors()
-        }
+   for <- ticker.C:{
+        node.sendUpdateToNeighbors()
     }
 } 
 

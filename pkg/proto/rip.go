@@ -5,38 +5,33 @@ import (
 	"iptcp-nora-yu/pkg/util"
 )
 
-type RoutingCmdType uint16
-
 const (
-	RoutingCmdTypeRequest  RoutingCmdType = 1 // for request of routing info
-	RoutingCmdTypeResponse RoutingCmdType = 2
-
-	INFINITY uint32 = 16
+	INFINITY         uint32 = 16
+	ripEntriesOffset int    = 4 // sizeof(command) + sizeof(numEntries)
 )
 
-type ripEntry struct {
+type RipEntry struct {
 	Cost    uint32 // <= 16. we define INFINITY to be 16
 	Address uint32 // IP addr
 	Mask    uint32 // subnet mask
 }
 
-type RIPMsg struct {
+type RoutingCmdType uint16
+
+const (
+	RoutingCmdTypeRequest  RoutingCmdType = 1 // for request of routing info
+	RoutingCmdTypeResponse RoutingCmdType = 2
+)
+
+type RipMsg struct {
 	Command    RoutingCmdType
 	NumEntries uint16 // <= 64 (and must be 0 for a request command)
-	Entries    []*ripEntry
+	Entries    []*RipEntry
 }
 
-func (m *RIPMsg) Marshal() ([]byte, error) {
+func (m *RipMsg) Marshal() ([]byte, error) {
 	b := make([]byte, 0)
-	var command []byte
-	switch m.Command {
-	case RoutingCmdTypeRequest:
-		command = util.Uint16ToBytes(1)
-	case RoutingCmdTypeResponse:
-		command = util.Uint16ToBytes(2)
-	default:
-		return nil, fmt.Errorf("invalid command type")
-	}
+	command := util.Uint16ToBytes(uint16(m.Command))
 	numEntries := util.Uint16ToBytes(m.NumEntries)
 	b = append(b, command...)
 	b = append(b, numEntries...)
@@ -46,29 +41,23 @@ func (m *RIPMsg) Marshal() ([]byte, error) {
 	return b, nil
 }
 
-func RIPMsgUnMarshal(b []byte) (ripMsg *RIPMsg, err error) {
+func (m *RipMsg) Unmarshal(b []byte) error {
 	command := util.BytesToUint16(b[0:2])
-	switch command {
-	case 1:
-		ripMsg.Command = RoutingCmdTypeRequest
-	case 2:
-		ripMsg.Command = RoutingCmdTypeResponse
-	default:
-		return nil, fmt.Errorf("invalid command")
-	}
-	ripMsg.NumEntries = util.BytesToUint16(b[2:4])
-	ripMsg.Entries = make([]*ripEntry, ripMsg.NumEntries)
-	for i := 0; i < int(ripMsg.NumEntries); i++ {
-		buf := b[4+i*12 : 4+(i+1)*12]
-		ripMsg.Entries[i], err = ripEntryUnMarshal(buf[0:12])
+	m.Command = RoutingCmdType(command)
+	m.NumEntries = util.BytesToUint16(b[2:4])
+	m.Entries = make([]*RipEntry, m.NumEntries)
+	for i := 0; i < int(m.NumEntries); i++ {
+		entryBytes := b[ripEntriesOffset+i*12 : ripEntriesOffset+(i+1)*12]
+		m.Entries[i] = new(RipEntry)
+		err := m.Entries[i].Unmarshal(entryBytes)
 		if err != nil {
-			return ripMsg, err
+			return err
 		}
 	}
-	return ripMsg, nil
+	return nil
 }
 
-func (r *ripEntry) marshal() []byte {
+func (r *RipEntry) marshal() []byte {
 	b := make([]byte, 0)
 	cost := util.Uint32ToBytes(r.Cost)
 	addr := util.Uint32ToBytes(r.Address)
@@ -79,12 +68,12 @@ func (r *ripEntry) marshal() []byte {
 	return b
 }
 
-func ripEntryUnMarshal(input []byte) (rip *ripEntry, err error) {
-	if len(input) < 12 {
-		return nil, fmt.Errorf("invalid input")
+func (r *RipEntry) Unmarshal(b []byte) error {
+	if len(b) < 12 {
+		return fmt.Errorf("invalid input")
 	}
-	rip.Cost = util.BytesToUint32(input[0:4])
-	rip.Address = util.BytesToUint32(input[4:8])
-	rip.Mask = util.BytesToUint32(input[8:12])
-	return rip, nil
+	r.Cost = util.BytesToUint32(b[0:4])
+	r.Address = util.BytesToUint32(b[4:8])
+	r.Mask = util.BytesToUint32(b[8:12])
+	return nil
 }

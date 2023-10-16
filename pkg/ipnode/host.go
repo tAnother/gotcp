@@ -11,7 +11,7 @@ func NewHost(config *lnxconfig.IPConfig) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	host.RegisterRecvHandler(proto.TestProtoNum, testRecvHandler)
+	host.RegisterRecvHandler(proto.ProtoNumTest, testRecvHandler)
 	return host, nil
 }
 

@@ -2,6 +2,7 @@ package util
 
 import (
 	"encoding/binary"
+	"math"
 	"net"
 	"net/netip"
 )
@@ -15,6 +16,14 @@ func Uint32ToIp(u uint32) netip.Addr {
 
 func IpToUint32(ip netip.Addr) uint32 {
 	return binary.BigEndian.Uint32(ip.AsSlice())
+}
+
+func PrefixLenToIPMask(b int) uint32 {
+	return ^((1 << (32 - b)) - 1)
+}
+
+func IPMaskToPrefixLen(m uint32) int {
+	return 32 - int(math.Log2(float64(^m+1)))
 }
 
 func Uint32ToBytes(u uint32) []byte {
