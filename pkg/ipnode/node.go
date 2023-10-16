@@ -260,7 +260,7 @@ func (n *Node) GetRoutingTableString() []string {
 // Send packet to neighbor on interface srcIF
 func (n *Node) forwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto.Packet) error {
 	if srcIF.isDown {
-		logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
+		// logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
 		return nil
 	}
 	if srcIF.conn == nil {

@@ -32,7 +32,7 @@ func routerTestRecvHandler(packet *proto.Packet, node *Node) {
 
 	// forward the packet
 	packet.Header.Checksum = 0
-	logger.Println("Forwarding packet...")
+	// logger.Println("Forwarding packet...")
 
 	srcIF, remoteAddr, err := node.findLinkLayerSrcDst(packet.Header.Dst)
 	if err != nil {
@@ -107,6 +107,7 @@ func (n *Node) RemoveExpiredEntries() {
 	expiry := time.Now().Add(-12 * time.Second)
 	for prefix, r := range n.RoutingTable {
 		if r.RouteType == RIP && r.UpdatedAt.Before(expiry) {
+			logger.Printf("removing %v from table...\n", prefix)
 			r.Cost = proto.INFINITY
 			updated = append(updated, r)
 			delete(n.RoutingTable, prefix)
@@ -130,11 +131,14 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 			continue
 		}
 		if ok {
-			oldEntry.UpdatedAt = now
-			if oldEntry.NextHop == entry.NextHop { // cost update for the same route
-				oldEntry.Cost = entry.Cost
-				updated = append(updated, oldEntry)
+			if oldEntry.NextHop == entry.NextHop { // same route heart beat
+				oldEntry.UpdatedAt = now
+				if oldEntry.Cost != entry.Cost { // cost update for the same route
+					oldEntry.Cost = entry.Cost
+					updated = append(updated, oldEntry)
+				}
 			} else if entry.Cost < oldEntry.Cost { // better route found
+				oldEntry.UpdatedAt = now
 				oldEntry.NextHop = entry.NextHop
 				oldEntry.Cost = entry.Cost
 				updated = append(updated, oldEntry)
@@ -182,17 +186,8 @@ func (n *Node) createRipResponse(entries []*RoutingEntry, dest netip.Addr) ([]by
 func (n *Node) getAllEntries() []*RoutingEntry {
 	var entries []*RoutingEntry
 	for _, r := range n.RoutingTable {
-		if r.RouteType == RIP {
+		if r.RouteType == RIP || r.RouteType == Local {
 			entries = append(entries, r)
-		} else if r.RouteType == Local {
-			if n.Interfaces[r.LocalNextHop].isDown { // interface is down - set cost to infinity
-				entries = append(entries, &RoutingEntry{
-					Prefix: r.Prefix,
-					Cost:   proto.INFINITY,
-				})
-			} else {
-				entries = append(entries, r)
-			}
 		}
 	}
 	return entries

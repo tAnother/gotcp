@@ -2,9 +2,7 @@ package proto
 
 import (
 	"fmt"
-	"log"
 	"net/netip"
-	"os"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
@@ -17,7 +15,7 @@ const (
 	ProtoNumTest uint8 = 0
 )
 
-var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+// var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
 type Packet struct {
 	Header  *ipv4header.IPv4Header
@@ -26,7 +24,7 @@ type Packet struct {
 
 // Create a new packet. msg will be truncated if packet length exceeds MTU
 func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *Packet {
-	logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
+	// logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
 	hdr := newHeader(srcIP, destIP, msg, protoNum)
 	return &Packet{
 		Header:  hdr,
