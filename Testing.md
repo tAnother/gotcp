@@ -52,3 +52,5 @@
 10.15 Fix updateRoutingTable: skip any updates for local or static routes; costs should choose the minimum value.
 
 10.15 Fix racing condition on `node.ListenOn()`: disassemble `ListenOn(interface)` to `BindUDP()` which binds all of the interfaces to the designated UDP port and then starts listening on each port.
+
+10.15 Get the latest commit. Fix update rip nbhrs when an interface is down. Error still persists. For example, down r2 if0 does not update r2 routing table. and it affects r3 routing entry for 10.1.0.0 subnet.
