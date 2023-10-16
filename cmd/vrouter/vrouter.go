@@ -6,6 +6,7 @@ import (
 	"iptcp-nora-yu/pkg/ipnode"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/repl"
+	"time"
 )
 
 func main() {
@@ -27,18 +28,31 @@ func main() {
 		return
 	}
 
-	repl := repl.NewRepl()
-
 	// start listening on each interface
+	router.BindUDP()
 	for _, i := range router.Interfaces {
-		go func(i *ipnode.Interface) {
-			router.ListenOn(i)
-		}(i)
+		go router.ListenOn(i)
 	}
 
-	// 3. set up tickers for routing entries?
+	// send out request to fill routing table
+	router.SendRipRequest()
 
-	// 4. set up a ticker (5s) to send RIP to neighbors (go routines)
+	// set up a ticker (5s) to send RIP to neighbors
+	go func(router *ipnode.Node) {
+		ticker := time.NewTicker(5 * time.Second)
+		for range ticker.C {
+			router.SendPeriodicRipUpdate()
+		}
+	}(router)
 
+	// routing table garbage collection
+	go func(router *ipnode.Node) {
+		ticker := time.NewTicker(10 * time.Second)
+		for range ticker.C {
+			router.RemoveExpiredEntries()
+		}
+	}(router)
+
+	repl := repl.NewRepl()
 	repl.Run(router)
 }

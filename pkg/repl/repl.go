@@ -194,7 +194,7 @@ func sendHandler(input string, replConfig *REPLConfig) error {
 		return fmt.Errorf("usage: send <dest IP> <msg>")
 	}
 	msg := strings.Join(args[2:], " ")
-	err := replConfig.node.Send(netip.MustParseAddr(args[1]), msg, proto.TestProtoNum)
+	err := replConfig.node.Send(netip.MustParseAddr(args[1]), []byte(msg), proto.ProtoNumTest)
 	if err != nil {
 		return err
 	}

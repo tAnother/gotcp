@@ -331,7 +331,12 @@ func sendHandler(input string, replConfig *REPLConfig)
 
 ### Phase 2: RIP
 
-1. Send Update
+See this [post](https://edstem.org/us/courses/45889/discussion/3629449) and [this](https://edstem.org/us/courses/45889/discussion/3629059) for encapsulating RIP msg.
+
+1. Send Update Spec
+
+    See this [post](https://edstem.org/us/courses/45889/discussion/3630914) for details.
+
 ```Go
 // Sends periodic RIP updates to the neighbors every 5 sec
 func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
@@ -342,31 +347,33 @@ func (n *Node) SendPeriodicUpdate(){ //should have a thread for each node
    // 3. Periodic sendUpdateToNeighbors
    ticker := time.NewTicker(util.RIP_COOLDOWN)
    defer ticker.Stop()
-   for {
-        select{
-            case <- ticker.C:
-                node.sendUpdateToNeighbors()
-        }
+   for <- ticker.C:{
+        node.sendUpdateToNeighbors()
     }
 } 
 
 func (n *Node) sendRipRequest(){
-   // for each interface of the router
+   // for each interface [i] of the router
+        // generate RIP msg according to the routing table
+        ripMsg := n.routingTableToRipMsg(RoutingCmdTypeRequest)
         // Marshal RIP msg to []bytes
-        // Wrap it into Packet
-        // Send the packet to the interface UDP?
+        bytesToSend, err := ripMsg.Marshal()
+        // Send the packet to the interface's neighbors [n]
+            n.Send(destIP, msg, 200) // we might need to change msg type from string to byte
 }
 
 func (n *Node) sendUpdateToNeighbors(){
-    // 1. get rip data from the node
-    // 2. for each interface f of the router
-            // 2.1. for each rip entry, update the cost using split horizon and poison reverse
-                // If rip entry and the interface f belongs to the same subnet and the cost is not 0
-                // It means this node does not have better knowledge about interface f than the neighboring node. So we should set the ripEntry cost to infinity 
+    // 1. get ripmsg from the node
+    ripMsg := n.routingTableToRipMsg(RoutingCmdTypeResponse)
+        // 2. for each rip entry, update the cost using split horizon and poison reverse
+            // if rt.NextHop is one of the neighbors and the cost is not 0
+                // It means this node does not have better knowledge about the destatination than the neighboring node. So we should set the corresponding ripEntry's cost to infinity 
         // 3. Marshal the ripMsg
         // 4. Wrap it to the packet
-        // 5. Send the packet to the interface UDP
+        // 5. Send the packet to the neighbor interface
 }
+
+func (n *Node) routingTableToRipMsg(commandType RoutingCmdType) *RIPMsg{}
 
 //should be triggered whenever a interface's state is chanegd
 func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be similar to sendUpdateToNeighbors. 
@@ -374,39 +381,56 @@ func (n *Node) SendTriggeredUpdate(updatedEntry []ripEntry){} //should be simila
 
 2. Expire routing entry
 
-    We should another field for `RoutingEntry`  (maybe `LastRefreshTime time.Time`). If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
+    We should another field for `RoutingEntry`  (maybe `LastRefreshTime time.Time`). 
+    
+    Check out this [post](https://edstem.org/us/courses/45889/discussion/3634129) for details.
 
-3. Send RIP packet
+    It's sufficient to have a thread that checks the whole routing table every N seconds (where N < 12), looks for entries that have expired, and then removes the routes and sends a triggered update if necessary.
+    
+    If it expires, the routing entry should be deleted from the routing table, and we need to call `SendTriggeredUpdate`.
+
+    ```Go
+    func (n *Node) CheckExpired(){
+        //for each routing entry in the routing table
+            //check if CurrentTime - LastRefreshTime >= 12
+            //if yes, remove the routing entry from the table and generate ripEntry with Cost = Infinity
+            // send triggered update
+    }
+    ```
+
+<!-- 3. Send RIP packet 
 
     If the packet is not for this node: `packet.Header.Dst != interface.AssignedIP`
     -  Decrement TTL
     - If TTL  == 0, drop the packet
     - Recompute the checksum
     - Forward the packet to the `routingEntry.nextHop` according to `n.Routingtable`
-    
+     -->
 
-4. Receive RIP packet
-    - If the packet is for this node
-    - Fetch the correponding interface
-    - Fetch `func ripPacketHandler` from `n.RecvHandlers`
-        - Trigger `ripPacketHandler()`
-            - Unmarshall
-            - Validation
-            - For each ripEntry, log to stdout: `Received rip packet: Src: {src}, Dst: {dest}, TTL:{TTL}, Data:{msg}, Cost :{cost}`
-            - If Request Command: send out?
-            - If Response Command: update the routing table
+4. Receive RIP packet (RIP handler)
 
-            ```Go
-            func updateRoutingtable(ripEntries []ripEntry, n *Neighbor) { // params TBD
-                //For each ripEntry
-                <D, C_n, N> = <ripEntry.Address, ripEntry.Cost, n>
-                    // 1. Convert addr and mask to netip.Addr and netip.Prefix 
-                    netIp := util.Uint32ToIp(ripEntry.Address)
-                    prefix := netip.PrefixFrom(netIp, mask)
-                    // let c = ripEntry.cost + 1
+    - If Request Command: 
 
-                    // 2. If the corresponding routingEntry not in the routing table and c < inifinity, add it to the table
-                    // 3. If we have an existing RoutingEntry
-                        // refer to Distance Vector Routing
-            }
-            ```
+        a. The node should respond with a RIP response that contains the full routing table (just like a standard periodic update). \
+        b. The node should add `R` type routing entry to the table. This is learned from received RIPMsg. \
+            Consider doc_example, R1 has interface `if1: 10.1.0.1`. It receives a RIP request packet sent from R2 with `Src: 10.1.0.2`. \
+            This ripMsg should contain the following entries: `{0, 10.2.0.0, 24}` and `{0, 10.1.0.0, 24}`. \
+            Since `{0, 10.2.0.0, 24}` is not within the same subnet as `if1: 10.1.0.1`. We need to add this entry to the node's routing table as
+            `{R 10.2.0.0/24 1}`.
+
+    - If Response Command: update the routing table using Distance Vector Routing
+
+    ```Go
+    func updateRoutingtable(ripEntries []ripEntry, n *Neighbor) { // params TBD
+        //For each ripEntry
+        <D, C_n, N> = <ripEntry.Address, ripEntry.Cost, n>
+            // 1. Convert addr and mask to netip.Addr and netip.Prefix 
+            netIp := util.Uint32ToIp(ripEntry.Address)
+            prefix := netip.PrefixFrom(netIp, mask)
+            // let c = ripEntry.cost + 1
+
+            // 2. If the corresponding routingEntry not in the routing table and c < inifinity, add it to the table
+            // 3. If we have an existing RoutingEntry
+                // refer to Distance Vector Routing
+    }
+    ```

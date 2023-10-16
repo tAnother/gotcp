@@ -2,32 +2,33 @@ package proto
 
 import (
 	"fmt"
-	"log"
 	"net/netip"
-	"os"
 
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
 )
 
 const (
 	MTU = 1400 // maximum-transmission-unit, default 1400 bytes
 
-	RIPProtoNum  uint8 = 200
-	TestProtoNum uint8 = 0
+	ProtoNumRIP  uint8 = 200
+	ProtoNumTest uint8 = 0
 )
 
-var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+// var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
 type Packet struct {
-	Header  *IPv4Header
+	Header  *ipv4header.IPv4Header
 	Payload []byte
 }
 
+// Create a new packet. msg will be truncated if packet length exceeds MTU
 func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *Packet {
-	logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
+	// logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
+	hdr := newHeader(srcIP, destIP, msg, protoNum)
 	return &Packet{
-		Header:  newHeader(srcIP, destIP, msg, protoNum),
-		Payload: msg,
+		Header:  hdr,
+		Payload: msg[:hdr.TotalLen-hdr.Len],
 	}
 }
 
@@ -77,12 +78,12 @@ func ValidateTTL() {
 
 }
 
-func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *IPv4Header {
-	return &IPv4Header{
+func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *ipv4header.IPv4Header {
+	return &ipv4header.IPv4Header{
 		Version:  4,
-		Len:      20, // Header length is always 20 when no IP options provided
+		Len:      20, // Header length is always 20 when no IP option is provided
 		TOS:      0,
-		TotalLen: HeaderLen + len(msg),
+		TotalLen: min(ipv4header.HeaderLen+len(msg), MTU),
 		ID:       0,
 		Flags:    0,
 		FragOff:  0,
