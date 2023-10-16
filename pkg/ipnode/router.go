@@ -126,7 +126,7 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 
 	for _, entry := range entries {
 		oldEntry, ok := n.RoutingTable[entry.Prefix]
-		if ok && oldEntry.RouteType != RIP { // we do not care about local or static routes
+		if ok && oldEntry.RouteType != RIP && entry.Cost == 0 { // we do not care about local or static routes
 			continue
 		}
 		if ok {
