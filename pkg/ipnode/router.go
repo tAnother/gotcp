@@ -107,7 +107,7 @@ func (n *Node) RemoveExpiredEntries() {
 	expiry := time.Now().Add(-12 * time.Second)
 	for prefix, r := range n.RoutingTable {
 		if r.RouteType == RIP && r.UpdatedAt.Before(expiry) {
-			logger.Printf("removing %v from table...\n", prefix)
+			// logger.Printf("removing %v from table...\n", prefix)
 			r.Cost = proto.INFINITY
 			updated = append(updated, r)
 			delete(n.RoutingTable, prefix)
@@ -127,7 +127,7 @@ func (n *Node) updateRoutingTable(entries []*RoutingEntry) {
 
 	for _, entry := range entries {
 		oldEntry, ok := n.RoutingTable[entry.Prefix]
-		if ok && oldEntry.RouteType != RIP && entry.Cost == 0 { // we do not care about local or static routes
+		if ok && oldEntry.RouteType != RIP { // we do not care about local or static routes
 			continue
 		}
 		if ok {
