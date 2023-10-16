@@ -54,3 +54,5 @@
 10.15 Fix racing condition on `node.ListenOn()`: disassemble `ListenOn(interface)` to `BindUDP()` which binds all of the interfaces to the designated UDP port and then starts listening on each port.
 
 10.15 Get the latest commit. Fix update rip nbhrs when an interface is down. Error still persists. For example, down r2 if0 does not update r2 routing table. and it affects r3 routing entry for 10.1.0.0 subnet.
+
+10.16 Fixed. The error was due to old entries marked as updated when they were in fact not. 
