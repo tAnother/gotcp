@@ -155,13 +155,63 @@ proto package is composed of `packet` and `rip`.
 
 ### 2.4 Thread Model
 
+Shold we draw a graph here?
+
 ### 2.5 Steps to Process IP Packets
 
 #### 2.5.1 Send
 
-##### 2.5.1.1 Test
+There is no difference in sending test or rip messages since both of them are wrapped into packets. The node only needs to figure out what the next hop is and which interface is responsible for forwarding the packet.
 
-##### 2.5.1.2 RIP
+**Send func definition:** 
+```Go
+func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error
+```
+
+**Send pseudocode:**
+```
+Input: A destination IP destIP, a message byte slice msg, a protocol number protoNum indicating which protocol to use
+Output: error if presents
+
+Procedures:
+1 if protoNum is neither test nor packet then
+2   return error
+3 End if
+
+# Finds the source interface to send out the packet and the dest UDP remote addr to receive the packet using the longest prefix matched method
+4 srcIF, remoteAddr, error -> FindLinkLayerSrcDst(destIP) 
+5 if cannot find the the interface or the dest UDP remote addr then
+6   return error
+7 End if
+
+# Creates a new packet with message as the payload, assigend IP of the source interface as the src, remoteAddr as dst, protoNum as protocol
+8 packet -> NewPacket(srcIF.AssignedIP, destIP, msg, protoNum)
+
+# Forwards the packet
+9 error -> ForwardPacket(srcIF, remoteAddr, packet)
+10 if cannot forward
+11   return error
+12 End if
+```
+
+**Helper funcs**:
+```Go
+// Finds the source interface and the dest UDP remote addr of the next hop
+func (n *Node) FindLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) 
+
+// Forwards the packet from source interface to the destination
+func (n *Node) ForwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto.Packet) error 
+
+// Finds the routing entry of next hop and previous step according to the destIP
+func (n *Node) findNextHopEntry(destIP netip.Addr) (entry *RoutingEntry, altAddr netip.Addr)  
+
+// Finds the longest prefix matched prefix in the routing table for the destIP
+func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix
+
+// Finds the neighbor interface of the interface with ifName, given the next hop IP which should match neighbor's virtual IP
+func (n *Node) findNextHopNeighbor(ifName string, nexthopIP netip.Addr) *Neighbor
+```
+
 
 #### 2.5.2 Receive
 
