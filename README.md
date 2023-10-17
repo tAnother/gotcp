@@ -1,14 +1,15 @@
 # README
-## Content
-
+<!-- 
 - How you abstract your link layer and its interfaces
 - The thread model for your RIP implementation
 - The steps you will need to process IP packets
 - You should also list any known bugs or notable design decisions in your README. If you identify known bugs and include a description of how you have attempted to fix the bug/where you think the bug originates from in your code, we will take off fewer points than if we have to find them ourselves.
 
 - In your README, please also note whether you developed your work using the container environment or on the department machines, and any instructions necessary to build your project.
+-->
 
 ## 1. Build
+
 The project is developed in the provided container environment.
 
 `make all` will create a folder `exec` and build executables `vhost` and `vrouter` in the folder.
@@ -51,13 +52,9 @@ The project is developed in the provided container environment.
 
 ```
 
-### 2.2 Design Decisions
+### 2.2 Abstraction & Design Details
 
-<!---TODO--->
-
-### 2.3 Abstraction 
-
-#### 2.3.1 ipnode
+#### 2.2.1 ipnode
 
 Our network is representated as a graph of ip nodes. The ipnode package consists of three components: `node` as the top-level abstraction, `host` and `router` as differnent types of ip nodes.
 
@@ -84,8 +81,8 @@ Our network is representated as a graph of ip nodes. The ipnode package consists
     }
     ```
 
-`node.go` also includes shared structs and functions among routers and hosts: 
-    
+`node.go` also includes shared structs and functions among routers and hosts:
+
 - `Interface` as the interface of each node. Each `interface.conn` is a type of `UDPConn` which represents the link layer in this project.
 
     ```Go
@@ -120,7 +117,7 @@ Our network is representated as a graph of ip nodes. The ipnode package consists
     }   
     ```
 
-#### 2.3.2 proto
+#### 2.2.2 proto
 
 proto package is composed of `packet` and `rip`. 
 
@@ -133,7 +130,8 @@ proto package is composed of `packet` and `rip`.
     }
     ```
 
-- `RipMsg` is a type of message that encompasses routing related information. 
+- `RipMsg` is a type of message that encompasses routing related information.
+
     ```Go
     type RipMsg struct {
         Command    RoutingCmdType
@@ -155,19 +153,20 @@ proto package is composed of `packet` and `rip`.
     )
     ```
 
-### 2.4 Thread Model
+### 2.3 Thread Model
 
 When a node starts, it will spawn several threads to listen on each interface. For a router, it will spawn two additional threads: one to send periodic rip updates to the neighbors; one to remove any expired routing entries.
+
 <img src="md_images/thread_model.jpg" alt="drawing" width="800"/>
 
+### 2.4 Steps to Process IP Packets
 
-### 2.5 Steps to Process IP Packets
-
-#### 2.5.1 Send
+#### 2.4.1 Send
 
 There is no difference in sending test or rip messages since both of them are wrapped into packets. The node only needs to figure out what the next hop is and which interface is responsible for forwarding the packet.
 
-**Send func definition:** 
+**Send func definition:**
+
 ```Go
 func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error
 ```
@@ -193,8 +192,8 @@ func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error
     11 &ensp; &ensp; return error  
     12 &ensp; End if  
 
-
 **Helper funcs**:
+
 ```Go
 // Finds the source interface and the dest UDP remote addr of the next hop
 func (n *Node) FindLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) 
@@ -212,12 +211,11 @@ func (n *Node) findLongestMatchedPrefix(destIP netip.Addr) netip.Prefix
 func (n *Node) findNextHopNeighbor(ifName string, nexthopIP netip.Addr) *Neighbor
 ```
 
+#### 2.4.2 Receive
 
-#### 2.5.2 Receive
+For receiving packets, we have a handler type defined as `type RecvHandlerFunc func(*proto.Packet, *Node)`.
 
-For receiving packets, we have a handler type defined as `type RecvHandlerFunc func(*proto.Packet, *Node)`. 
-
-**Receive func definition:** 
+**Receive func definition:**
 
 For *hosts*, we have a test packet handler `func testRecvHandler(packet *proto.Packet, node *ipnode.Node)` which simply prints out the information of the packet.
 
@@ -259,6 +257,7 @@ For *routers*, we have two handlers, one for test and one for rip.
     14 &ensp; &ensp; &ensp; do nothing
 
 **Helper funcs**:
+
 ```Go
 // Creates and marshals rip response to dest
 func createRipResponse(entries []*ipnode.RoutingEntry, dest netip.Addr) ([]byte, error)
@@ -277,4 +276,5 @@ func (r *VRouter) getAllEntries() []*ipnode.RoutingEntry
 ```
 
 ## 3. Known Bugs
-To the best our knowledge, there's no existing bugs in our code yet. 
+
+To the best our knowledge, there's no existing bugs in our code yet.
