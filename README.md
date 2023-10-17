@@ -53,6 +53,8 @@ The project is developed in the provided container environment.
 
 ### 2.2 Design Decisions
 
+<!---TODO--->
+
 ### 2.3 Abstraction 
 
 #### 2.3.1 ipnode
@@ -155,7 +157,9 @@ proto package is composed of `packet` and `rip`.
 
 ### 2.4 Thread Model
 
-Shold we draw a graph here?
+When a node starts, it will spawn several threads to listen on each interface. For a router, it will spawn two additional threads: one to send periodic rip updates to the neighbors; one to remove any expired routing entries.
+<img src="md_images/thread_model.jpg" alt="drawing" width="800"/>
+
 
 ### 2.5 Steps to Process IP Packets
 
