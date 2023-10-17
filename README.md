@@ -168,31 +168,27 @@ There is no difference in sending test or rip messages since both of them are wr
 func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error
 ```
 
-**Send pseudocode:**
-```
-Input: A destination IP destIP, a message byte slice msg, a protocol number protoNum indicating which protocol to use
-Output: error if presents
+**Send Logic Flow:**
 
-Procedures:
-1 if protoNum is neither test nor packet then
-2   return error
-3 End if
+> **Input**: A destination IP destIP, a message byte slice msg, a protocol number protoNum indicating which protocol to use  
+  **Output**: error if presents  
+  **Procedures**:  
+    1&ensp;   if protoNum is neither test nor packet then  
+    2 &ensp; &ensp;  return error  
+    3&ensp;  End if  
+    *Finds the source interface to send out the packet and the dest UDP remote addr to receive the packet using the longest prefix matched method*  
+    4 &ensp; srcIF, remoteAddr, error -> FindLinkLayerSrcDst(destIP)   
+    5 &ensp; if cannot find the the interface or the dest UDP remote addr then  
+    6 &ensp; &ensp;   return error  
+    7 &ensp; End if  
+    *Creates a new packet with message as the payload, assigend IP of the source interface as the src, remoteAddr as dst, protoNum as protocol*  
+    8 &ensp; packet -> NewPacket(srcIF.AssignedIP, destIP, msg, protoNum)  
+    *Forwards the packet*  
+    9 &ensp; error -> ForwardPacket(srcIF, remoteAddr, packet)  
+    10 &ensp; if cannot forward  
+    11 &ensp; &ensp; return error  
+    12 &ensp; End if  
 
-# Finds the source interface to send out the packet and the dest UDP remote addr to receive the packet using the longest prefix matched method
-4 srcIF, remoteAddr, error -> FindLinkLayerSrcDst(destIP) 
-5 if cannot find the the interface or the dest UDP remote addr then
-6   return error
-7 End if
-
-# Creates a new packet with message as the payload, assigend IP of the source interface as the src, remoteAddr as dst, protoNum as protocol
-8 packet -> NewPacket(srcIF.AssignedIP, destIP, msg, protoNum)
-
-# Forwards the packet
-9 error -> ForwardPacket(srcIF, remoteAddr, packet)
-10 if cannot forward
-11   return error
-12 End if
-```
 
 **Helper funcs**:
 ```Go
@@ -215,8 +211,66 @@ func (n *Node) findNextHopNeighbor(ifName string, nexthopIP netip.Addr) *Neighbo
 
 #### 2.5.2 Receive
 
-##### 2.5.2.1 Test
+For receiving packets, we have a handler type defined as `type RecvHandlerFunc func(*proto.Packet, *Node)`. 
 
-##### 2.5.2.2 RIP
+**Receive func definition:** 
+
+For *hosts*, we have a test packet handler `func testRecvHandler(packet *proto.Packet, node *ipnode.Node)` which simply prints out the information of the packet.
+
+For *routers*, we have two handlers, one for test and one for rip.
+
+- Test: `func routerTestRecvHandler(packet *proto.Packet, node *ipnode.Node)`
+
+    **Test Logic Flow:**
+
+    > **Input**: A received packet, a node that handles the logic   
+    **Procedures**:   
+    1 &ensp; **if** the packet is for one of the interfaces in this node  
+    2 &ensp; &ensp; prints out the information of the packet  
+    3 &ensp; &ensp; **return**  
+    4 &ensp; **End if**  
+    *Finds the source interface to send out the packet and the dest UDP remote addr to receive the packet using the longest prefix matched method*  
+    5 &ensp; destIP -> packet.Header.Dst  
+    6 &ensp; srcIF, remoteAddr -> FindLinkLayerSrcDst(destIP)   
+    7 &ensp; ForwardPacket(srcIF, remoteAddr, packet)  
+
+- RIP: `func ripRecvHandler(router *VRouter) func(*proto.Packet, *ipnode.Node)` returns another func that takes in `*proto.Packet, *ipnode.Node` as args. The pseudocode presnets the logic of the later func.
+
+    **RIP Logic Flow:**
+    > **Input**: A received packet, a node that handles the logic   
+    **Procedures**:  
+    1 &ensp; ripMsg -> Unmarshals the packet  
+    2 &ensp; **switch** ripMsg.Command **do**  
+    3 &ensp; &ensp; **case** Request:  
+    4 &ensp; &ensp; &ensp; **if** number of entries is not 0   
+    5 &ensp; &ensp; &ensp; &ensp; **return**  
+    6 &ensp; &ensp; &ensp; **End if**  
+    7 &ensp; &ensp; &ensp; Converts routing entries to RIP entries  
+    8 &ensp; &ensp; &ensp; Creates RIP response payload  
+    9 &ensp; &ensp; &ensp; Sends out the payload   
+    10 &ensp; &ensp; **case** Response:  
+    11 &ensp; &ensp; &ensp;  Converts RIP entries to Routing entries  
+    12 &ensp; &ensp; &ensp; Updates node's Routing Table  
+    13 &ensp; &ensp;**default**:  
+    14 &ensp; &ensp; &ensp; do nothing
+
+**Helper funcs**:
+```Go
+// Creates and marshals rip response to dest
+func createRipResponse(entries []*ipnode.RoutingEntry, dest netip.Addr) ([]byte, error)
+
+// Converts RIP entries to Routing entries  
+func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) []*ipnode.RoutingEntry
+
+// Converts Routing entries entries to RIP entries
+func routingEntriesToRipEntries(entries []*ipnode.RoutingEntry, dest netip.Addr) []*proto.RipEntry
+
+// Updates routing table using distance vector routing along with split horizon and poison reverse
+func (r *VRouter) updateRoutingTable(entries []*ipnode.RoutingEntry)
+
+// Gets all local & remote entries in the routing table
+func (r *VRouter) getAllEntries() []*ipnode.RoutingEntry
+```
 
 ## 3. Known Bugs
+To the best our knowledge, there's no existing bugs in our code yet. 
