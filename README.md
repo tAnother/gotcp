@@ -8,6 +8,8 @@
 - In your README, please also note whether you developed your work using the container environment or on the department machines, and any instructions necessary to build your project.
 -->
 
+Our code is in the refactoring phase under `refactoring` branch. 2.1 Directory Structure might change after the merge.
+
 ## 1. Build
 
 The project is developed in the provided container environment.
