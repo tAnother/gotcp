@@ -19,8 +19,5 @@
 ./router
 ./vrouter
 
-# directory to store generated network files
-networks/ 
-
-exec/
-test/
+test
+networks
