@@ -43,6 +43,16 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return bytesToSend, nil
 }
 
+func (p *Packet) Unmarshal(data []byte) error {
+	hdr, err := ipv4header.ParseHeader(data)
+	if err != nil {
+		return fmt.Errorf("error parsing header: %v", err)
+	}
+	p.Header = hdr
+	p.Payload = data[hdr.Len:]
+	return nil
+}
+
 func ComputeChecksum(b []byte) uint16 {
 	checksum := header.Checksum(b, 0)
 
@@ -72,10 +82,6 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 	checksum := header.Checksum(b, fromHeader)
 
 	return checksum
-}
-
-func ValidateTTL() {
-
 }
 
 func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *ipv4header.IPv4Header {

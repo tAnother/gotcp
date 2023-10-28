@@ -280,3 +280,14 @@ func (r *VRouter) getAllEntries() []*ipnode.RoutingEntry
 ## 3. Known Bugs
 
 To the best our knowledge, there's no existing bugs in our code yet.
+
+
+
+## 4. Refactoring note
+Changes:
+1. Sort vrouter and vhost specific logic into separate packages.
+2. Decouple REPL & ipnode
+3. Put utils into separate packages
+
+Planned(?):
+4. Should different protocols live in different packages?

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/ipnode"
 	"iptcp-nora-yu/pkg/lnxconfig"
-	"iptcp-nora-yu/pkg/repl"
+	"iptcp-nora-yu/pkg/vhost"
 )
 
 func main() {
@@ -22,18 +22,14 @@ func main() {
 		return
 	}
 
-	host, err := ipnode.NewHost(ipconfig)
+	host, err := vhost.New(ipconfig)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	// start listening on each interface
-	host.BindUDP()
-	for _, i := range host.Interfaces {
-		go host.ListenOn(i)
-	}
+	host.Node.Start()
 
-	repl := repl.NewRepl()
-	repl.Run(host)
+	repl := ipnode.NodeRepl(host.Node)
+	repl.Run()
 }
