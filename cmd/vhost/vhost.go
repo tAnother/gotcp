@@ -30,6 +30,7 @@ func main() {
 
 	host.Node.Start()
 
-	repl := ipnode.NodeRepl(host.Node)
+	repl := ipnode.IpRepl(host.Node)
+	// repl, err := repl.CombineRepls([]*REPL{ipnode.IpRepl(host.Node), vhost.TcpRepl()})
 	repl.Run()
 }

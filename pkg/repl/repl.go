@@ -3,6 +3,7 @@ package repl
 // note: based off of csci1270-fall23
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,9 +24,27 @@ func NewRepl() *REPL {
 	return r
 }
 
+// Combines a slice of REPLs.
+func CombineRepls(repls []*REPL) (*REPL, error) {
+	combined := NewRepl()
+	if repls == nil || len(repls) < 1 {
+		return combined, nil
+	}
+	for _, repl := range repls {
+		for k, v := range repl.Help {
+			if _, ok := combined.Help[k]; ok {
+				return nil, errors.New("overlaps in repls")
+			}
+			combined.Help[k] = v
+			combined.Commands[k] = repl.Commands[k]
+		}
+	}
+	return combined, nil
+}
+
 // Add a command, along with its help string, to the set of commands
 func (r *REPL) AddCommand(trigger string, handler func(string, *REPLConfig) error, help string) {
-	if trigger == "" || trigger[0] == '.' {
+	if trigger == "" {
 		return
 	}
 	r.Help[trigger] = help

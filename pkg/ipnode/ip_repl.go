@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func NodeRepl(node *Node) *repl.REPL {
+func IpRepl(node *Node) *repl.REPL {
 	r := repl.NewRepl()
 	r.AddCommand("ln", lnHandler(node), "Prints neighbors of the current node. usage: ln")
 	r.AddCommand("li", liHandler(node), "Prints all interfaces of the current node. usage: li")
@@ -30,13 +30,13 @@ func lnHandler(node *Node) func(string, *repl.REPLConfig) error {
 
 		_, err := io.WriteString(config.Writer, "Iface\tVIP\t\tUDPAddr\n")
 		if err != nil {
-			return fmt.Errorf("lnHandler cannot write the header to stdout.\n")
+			return fmt.Errorf("lnHandler cannot write the header to stdout")
 		}
 
 		for _, neighborInfo := range neighbors {
 			_, err := io.WriteString(config.Writer, neighborInfo)
 			if err != nil {
-				return fmt.Errorf("lnHandler cannot write neighors to stdout.\n")
+				return fmt.Errorf("lnHandler cannot write neighors to stdout")
 			}
 		}
 		return nil
@@ -53,13 +53,13 @@ func liHandler(node *Node) func(string, *repl.REPLConfig) error {
 
 		_, err := io.WriteString(config.Writer, "Name\tAddr/Prefix\tState\n")
 		if err != nil {
-			return fmt.Errorf("liHandler cannot write the header to stdout.\n")
+			return fmt.Errorf("liHandler cannot write the header to stdout")
 		}
 
 		for _, interfaceInfo := range interfaces {
 			_, err := io.WriteString(config.Writer, interfaceInfo)
 			if err != nil {
-				return fmt.Errorf("liHandler cannot write interfaces to stdout.\n")
+				return fmt.Errorf("liHandler cannot write interfaces to stdout")
 			}
 		}
 		return nil
@@ -76,14 +76,14 @@ func lrHandler(node *Node) func(string, *repl.REPLConfig) error {
 
 		_, err := io.WriteString(config.Writer, "T\tPrefix\t\tNext hop\tCost\n")
 		if err != nil {
-			return fmt.Errorf("lrHandler cannot write the header to stdout.\n")
+			return fmt.Errorf("lrHandler cannot write the header to stdout")
 		}
 
 		for _, rtInfo := range routingTable {
 			_, err := io.WriteString(config.Writer, rtInfo)
 			// log.Printf("[lrHandler] writes %d bytes", bytes)
 			if err != nil {
-				return fmt.Errorf("lrHandler cannot write routing table to stdout.\n")
+				return fmt.Errorf("lrHandler cannot write routing table to stdout")
 			}
 		}
 		return nil
