@@ -66,12 +66,15 @@ Retransmission, connection teardown, packet logging and handling out-of-order pa
 │   │   ├── listener.go         -- listener socket related functions
 │   │   ├── state.go            -- state machine
 │   │   ├── tcb.go              -- tcb info
+│   │   ├── tcp_repl.go         
+│   │   ├── tcp_print.go        
 │   ├── repl
 │   │   ├── repl.go
 │   ├── vhost
 │   │   ├── vhost.go
 │   ├── vrouter
 │   │   ├── vrouter.go
+│   │   ├── utils.go
 │   ├── lnxconfig               -- parser for .lnx file
 ├── util
 │   ├── rip-dissector           -- for wireshark to decode messages in RIP protocols
@@ -126,11 +129,6 @@ Add another handler for tcp packet:
 
 On receiving packet with “SYN”, find corresponding airport in the socket table, push this connection into its queue (channel) for VAccept to consume -->
 
-### cmd
-
-#### vhost.go
-
-Add tcp support.
 
 ### pkg: vhost
 
@@ -143,100 +141,99 @@ func (h *VHost) SendTcpPacket(p *proto.TCPPacket, srcIP netip.Addr, destIP netip
 
 ### pkg: tcpstack
 
-VListen creates a new listening socket bound to the specified port. After binding, this socket moves into the LISTEN state—this is known as “passive open” in the RFC.
+#### tcpstack.go
 
-VListen returns a TCPListener on success. On failure, it should return an error describing the failure.
-
-```Go
-// Inits tcp stack state
-func Init(addr netip.Addr, host *vhost.VHost) 
-func VListen(port uint16) (*VTCPListener, error)
-//similar to Dial
-func VConnect(addr netip.Addr, port int16) (VTCPConn, error)
-```
-
-#### globalInfo.go
+It contains how structs are defined under tcp stack and APIs.
 
 ```Go
+var tcb *VTCPGlobalInfo
+
+var socketId int32 = -1
+
+type State string
+
 type TCPEndpointID struct{
     localAddr  netip.Addr
-	localPort  uint16
-	remoteAddr netip.Addr
+	  localPort  uint16
+	  remoteAddr netip.Addr
     remotePort uint16
 }
 
 type VTCPGlobalInfo struct{
     LocalAddr     netip.Addr //NEWLY ADDED. 
-	ListenerTable map[uint16]*VTCPListener //port num: listener
-	ConnTable     map[TCPEndpointID]*VTCPConn
-	TableMu       sync.RWMutex
-	Driver        *vhost.VHost //NEWLY ADDED. 
+    ListenerTable map[uint16]*VTCPListener //port num: listener
+    ConnTable     map[TCPEndpointID]*VTCPConn
+    TableMu       sync.RWMutex
+    Driver        *vhost.VHost //NEWLY ADDED. 
 }
 
-func (*VTCPGlobalInfo) GetRandomPortNum() // get an available (unused) port num
-```
 
-#### vtcpListener.go
-VAccept waits for new TCP connections on the given listening socket. If no new clients have connected, this function MUST block until a new connection occurs.
-
-When a new client connects, VAccept returns a new normal-type socket to represent the new connection. In our example, it returns a new VTCPConn struct for this socket.
-
-On failure, this method should return nil for the socket and a non-nil error value describing the failure.
-
-```Go
 type VTCPListener struct {
-	addr          netip.Addr
-	port          uint16
-	pendingSocket chan struct {
-		*proto.TCPPacket
-		netip.Addr
-	} //NEWLY ADDED. since we need info about TCP header and the srcIP
+    socketId      int32
+    addr          netip.Addr
+    port          uint16
+    pendingSocket chan struct {
+      *proto.TCPPacket
+      netip.Addr
+    } //since we need info about TCP header and the srcIP
 }
 
-func (*VTCPListener) VAccept() (*VTCPConn, error)
-func (*VTCPListener) VClose() error	// not for milestone I
-```
-
-```Go
-type VTCPConn struct{ //represents a TCP socket
-    socketId           uint32
+type VTCPConn struct { //represents a TCP socket
+    socketId   int32
     localAddr  netip.Addr
-	localPort  uint16
-	remoteAddr netip.Addr
-	remotePort uint16
+    localPort  uint16
+    remoteAddr netip.Addr
+    remotePort uint16
 
-	sendBuff *proto.CircBuff
-	recvBuff *proto.CircBuff
+    sendBuff *proto.CircBuff
+    recvBuff *proto.CircBuff
 
-    state           State
-    stateMu         sync.Mutex
+    state   State
+    stateMu sync.Mutex
 
     srtt             *proto.SRTT
-	localInitSeqNum  uint32 //should be atomic.
-	remoteInitSeqNum uint32 // NEWLY ADDED.
-	largestAckedNum  uint32 //should be atomic. the largest ACK we received
-	expectedSeqNum   uint32 //should be atomic. the ACK num we should send to the other side
+    localInitSeqNum  uint32 //should be atomic.
+    remoteInitSeqNum uint32
+    largestAckedNum  uint32 //should be atomic. the largest ACK we received
+    expectedSeqNum   uint32 //should be atomic. the ACK num we should send to the other side
 
-	windowSize uint32
+    windowSize uint32
 
-	recvChan chan *proto.TCPPacket //NEWLY ADDED. see details of VRead in the handout.
+    recvChan chan *proto.TCPPacket //see details of VRead in the handout.
 }
+
+
+func Init(addr netip.Addr, host *vhost.VHost) 
+func VListen(port uint16) (*VTCPListener, error)
+func VConnect(addr netip.Addr, port int16) (VTCPConn, error)
+func tcpRecvHandler(packet *proto.Packet, node *ipnode.Node)
+```
+
+#### listener.go
+
+```Go
+func NewListenerSocket(port uint16, addr netip.Addr) *VTCPListener 
+func (*VTCPListener) VAccept() (*VTCPConn, error)
+func (*VTCPListener) VClose() error
+```
+
+#### conn.go
+
+```Go
+func NewSocket(state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn
 
 func (*VTCPConn) VRead(buf []byte) (int, error) // not for milestone I
 func (*VTCPConn) VWrite(data []byte) (int, error) // not for milestone I
 func (*VTCPConn) VClose() error // not for milestone I
-func (*VTCPConn) generateStartSeqNum()
+func (*VTCPConn) handleConnection()
+func (v *VTCPConn) setState(state State)
 ```
-
-##### API
-
-![API](./md_images/gearup_API.png)
 
 #### state.go
 
-```Go
-type State string
+It contains state machine which handles states under different situations.
 
+```Go
 const (
     CLOSED       State  = "CLOSED"
     LISTEN       State  = "LISTEN"
@@ -250,9 +247,21 @@ const (
     LAST_ACK     State  = "LAST_ACK"
     ESTABLISHED  State  = "ESTABLISHED"
 )
+
+func handleSynRecvd(conn *VTCPConn, endPoint TCPEndpointID) error
+func handleSynSent(conn *VTCPConn, endpoint TCPEndpointID) error
+//...TBD
 ```
 
 State machine see example [here](https://github.com/google/netstack/blob/55fcc16cd0eb096d8418f7bc5162483c31a4e82b/tcpip/transport/tcp/connect.go#L288).
+
+#### tcp_repl.go
+ 
+This contains cli handlers for tcp stack.
+
+```Go
+func TcpRepl(node *ipnode.Node) *repl.REPL
+```
 
 ### pkg: proto
 
@@ -271,7 +280,7 @@ type CircBuff struct{
 }
 ```
 
-#### tcp.go
+#### tcppacket.go
 
 The maximum TCP payload size is:
 `1400 bytes - (size of IP header) - (size of TCP header)`
