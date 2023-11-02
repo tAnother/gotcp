@@ -16,16 +16,16 @@
 2. **[PASS]** Should be able to update `R` routing entry at the beginning immediately;
 
     > r2h2 reference\
-    <img src="md_images/lr_start.png" alt="drawing" width="500"/>
+    <img src="md_images/ip/lr_start.png" alt="drawing" width="500"/>
 
 3. **[PASS]** If an interface is down, the neighbors should delete the corresponding RIP routing entry if no other routes avaiable;
     > r2h2 reference: if0 of r2 is down\
-    <img src="md_images/link_down.png" alt="drawing" width="500"/>
+    <img src="md_images/ip/link_down.png" alt="drawing" width="500"/>
 
 
 4. **[PASS]** For each `R` routing entry, it should always has the lowest-cost path:
      > loop reference\
-    <img src="md_images/lowest_cost.png" alt="drawing" width="500"/>
+    <img src="md_images/ip/lowest_cost.png" alt="drawing" width="500"/>
 
     **Clarification**
     For r5, the next hop of 10.1.0.0 is 10.4.0.1 with cost 2 in the ref prog, but ours has 10.5.0.2 with cost 2. We do not need to worry about it. See this [post](https://edstem.org/us/courses/45889/discussion/3641481).
@@ -33,7 +33,7 @@
 
 5. **[PASS]**  If an interface is down, the neighbors should update the routing table if there are other available routes:
     > loop reference: if0 of r2 is down\
-    <img src="md_images/loop_down.png" alt="drawing" width="500"/>
+    <img src="md_images/ip/loop_down.png" alt="drawing" width="500"/>
 
     **[FIXED] BUG**\
     r2 does not update the routing table accordingly.
@@ -46,11 +46,11 @@
 6. **[PASS]** If a host is not reachable, all of the routers need to delete that entry and should not be able to send message to that host.
 
     > loop reference: if1, if2 of r1 is down. h1 is not reachable\
-    <img src="md_images/host_non_reachable.png" alt="drawing" width="600"/>
+    <img src="md_images/ip/host_non_reachable.png" alt="drawing" width="600"/>
 
     **[FIXED] BUG** Concurrent error:
      > loop: if1, if2 of r1 is down. \
-    <img src="md_images/bug/concurrent_bug.png" alt="drawing" width="600"/>
+    <img src="md_images/ip/bug/concurrent_bug.png" alt="drawing" width="600"/>
 
 7.  **[PASS]** If an interface is back online, routing table should update accordingly.
 
