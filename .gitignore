@@ -19,5 +19,6 @@
 ./router
 ./vrouter
 
+exec
 test
 networks

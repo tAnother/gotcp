@@ -143,7 +143,7 @@ func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 
 // Send msg to destIP
 func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error {
-	if protoNum != proto.ProtoNumRIP && protoNum != proto.ProtoNumTest {
+	if protoNum != proto.ProtoNumRIP && protoNum != proto.ProtoNumTest && protoNum != proto.ProtoNumTCP {
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 

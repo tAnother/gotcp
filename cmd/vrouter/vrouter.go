@@ -49,6 +49,6 @@ func main() {
 		}
 	}(router)
 
-	repl := ipnode.NodeRepl(router.Node)
+	repl := ipnode.IpRepl(router.Node)
 	repl.Run()
 }

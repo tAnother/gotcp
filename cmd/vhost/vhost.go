@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/ipnode"
 	"iptcp-nora-yu/pkg/lnxconfig"
+	"iptcp-nora-yu/pkg/repl"
+	"iptcp-nora-yu/pkg/tcpstack"
 	"iptcp-nora-yu/pkg/vhost"
 )
 
@@ -28,9 +30,15 @@ func main() {
 		return
 	}
 
+	tcpstack.Init(host.GetLocalAddr(), host)
+
 	host.Node.Start()
 
-	repl := ipnode.IpRepl(host.Node)
-	// repl, err := repl.CombineRepls([]*REPL{ipnode.IpRepl(host.Node), vhost.TcpRepl()})
-	repl.Run()
+	repls := []*repl.REPL{ipnode.IpRepl(host.Node), tcpstack.TcpRepl(host.Node)}
+	combined, err := repl.CombineRepls(repls)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	combined.Run()
 }

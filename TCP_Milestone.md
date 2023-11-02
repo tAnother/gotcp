@@ -12,17 +12,73 @@
 
 - In addition, try to consider how you will tackle these problems, which we will discuss:
   - What does a SYN packet or a FIN packet do to the receiving socket (in general)?
+
+    The status/state of the receiving socket might change accordingly.
+
   - What data structures/state variables would you need to represent each TCP socket?
+
+    Specified in design below.
+
   - How will you map incoming packets to sockets?
+
+     SrcIp/RemoteAddr is from IPHeader. RemotePort is included in TCP Packet. Local Addr and Local Port are in the Listener. These four fields together form a tuple repersenting a key entry in the socket table. Thus, we could use this to map incoming packet to the socket.
+
   - What types of events do you need to consider that would affect each socket?
+
+    Three-way handshake. Closure of the socket. (there should be more about retransmission?)
+
   - How will you implement retransmissions?
+
+     Not sure yet.
+
   - In what circumstances would a socket allocation be deleted? What could be hindering when doing so? Note that the state CLOSED would not be equivalent as being deleted.
+
+    Not sure yet.
 
 ## Milestone II
 
 For this meeting, students should have the send and receive commands working over non-lossy links. That is, send and receive should each be utilizing the sliding window and ACKing the data received to progress the window. To do this, you should have a working implementation for your send and receive buffers, including handling sequence numbers, circular buffers, etc.
 
 Retransmission, connection teardown, packet logging and handling out-of-order packets is not required yet.
+
+
+## Directory Structure
+
+```
+├── cmd                         -- source code for executables
+│   ├── vhost
+│   ├── vrouter
+├── pkg
+│   ├── proto
+│   │   ├── ippacket.go
+│   │   ├── tcppacket.go
+│   │   ├── rip.go
+│   │   ├── srtt.go
+│   │   ├── cirbuff.go
+│   ├── ipnode
+│   │   ├── node.go             -- shared structs & functions among routers & hosts
+│   │   ├── node_print.go
+│   │   ├── node_subr.go
+│   │   ├── ip_repl.go
+│   ├── tcpstack
+│   │   ├── tcpstack.go         -- shared structs & functions for tcpstack
+│   │   ├── conn.go             -- normal socket related functions
+│   │   ├── listener.go         -- listener socket related functions
+│   │   ├── state.go            -- state machine
+│   │   ├── tcb.go              -- tcb info
+│   ├── repl
+│   │   ├── repl.go
+│   ├── vhost
+│   │   ├── vhost.go
+│   ├── vrouter
+│   │   ├── vrouter.go
+│   ├── lnxconfig               -- parser for .lnx file
+├── util
+│   ├── rip-dissector           -- for wireshark to decode messages in RIP protocols
+├── reference                   -- reference programs
+├── net                         -- network topologies
+└── Makefile
+```
 
 ## Functionality
 
@@ -62,23 +118,38 @@ After filtering your packet capture to show only one side of the transmission, y
   - `sf`: Use your Socket API to send a file
   - `rf`: Use your Socket API to receive a file
 
-### pkg: ipnode
+<!-- ### pkg: ipnode
 
 #### node.go
 
 Add another handler for tcp packet:
 
-On receiving packet with “SYN”, find corresponding airport in the socket table, push this connection into its queue (channel) for VAccept to consume
+On receiving packet with “SYN”, find corresponding airport in the socket table, push this connection into its queue (channel) for VAccept to consume -->
 
-### pkg: cmd
+### cmd
 
 #### vhost.go
 
 Add tcp support.
 
-### pkg: tcpstack
+### pkg: vhost
+
+#### vhost.go
 
 ```Go
+func (v *VHost) GetLocalAddr() netip.Addr
+func (h *VHost) SendTcpPacket(p *proto.TCPPacket, srcIP netip.Addr, destIP netip.Addr) error 
+```
+
+### pkg: tcpstack
+
+VListen creates a new listening socket bound to the specified port. After binding, this socket moves into the LISTEN state—this is known as “passive open” in the RFC.
+
+VListen returns a TCPListener on success. On failure, it should return an error describing the failure.
+
+```Go
+// Inits tcp stack state
+func Init(addr netip.Addr, host *vhost.VHost) 
 func VListen(port uint16) (*VTCPListener, error)
 //similar to Dial
 func VConnect(addr netip.Addr, port int16) (VTCPConn, error)
@@ -88,27 +159,38 @@ func VConnect(addr netip.Addr, port int16) (VTCPConn, error)
 
 ```Go
 type TCPEndpointID struct{
-    localAddr  uint32
-    localPort  uint16
-    remoteAddr uint32
+    localAddr  netip.Addr
+	localPort  uint16
+	remoteAddr netip.Addr
     remotePort uint16
 }
 
 type VTCPGlobalInfo struct{
-    listenerTable   map[uint16]*VTCPListener    //port num: listener
-    connTable       map[TCPEndpointID]*VTCPConn
-    tableMu         sync.RWMutex
+    LocalAddr     netip.Addr //NEWLY ADDED. 
+	ListenerTable map[uint16]*VTCPListener //port num: listener
+	ConnTable     map[TCPEndpointID]*VTCPConn
+	TableMu       sync.RWMutex
+	Driver        *vhost.VHost //NEWLY ADDED. 
 }
 
 func (*VTCPGlobalInfo) GetRandomPortNum() // get an available (unused) port num
 ```
 
 #### vtcpListener.go
+VAccept waits for new TCP connections on the given listening socket. If no new clients have connected, this function MUST block until a new connection occurs.
+
+When a new client connects, VAccept returns a new normal-type socket to represent the new connection. In our example, it returns a new VTCPConn struct for this socket.
+
+On failure, this method should return nil for the socket and a non-nil error value describing the failure.
 
 ```Go
-type VTCPListener struct{
-    addrPort        netip.AddrPort
-    pendingSocket   chan (netip.AddrPort)
+type VTCPListener struct {
+	addr          netip.Addr
+	port          uint16
+	pendingSocket chan struct {
+		*proto.TCPPacket
+		netip.Addr
+	} //NEWLY ADDED. since we need info about TCP header and the srcIP
 }
 
 func (*VTCPListener) VAccept() (*VTCPConn, error)
@@ -117,22 +199,27 @@ func (*VTCPListener) VClose() error	// not for milestone I
 
 ```Go
 type VTCPConn struct{ //represents a TCP socket
-    socketId           uint16
-    localAddrPort      netip.AddrPort
-    remoteAddrPort     netip.AddrPort
+    socketId           uint32
+    localAddr  netip.Addr
+	localPort  uint16
+	remoteAddr netip.Addr
+	remotePort uint16
 
-    sendBuff           *CircBuff
-    recvBuff           *CircBuff
+	sendBuff *proto.CircBuff
+	recvBuff *proto.CircBuff
 
     state           State
     stateMu         sync.Mutex
 
-    srtt            *SRTT
-    initSeqNum      *atomic.uint32
-    ackedNum        *atomic.uint32 //the largest ACK we received
-    expectedSeqNum  *atomic.uint32 //the ACK num we should send to the other side
+    srtt             *proto.SRTT
+	localInitSeqNum  uint32 //should be atomic.
+	remoteInitSeqNum uint32 // NEWLY ADDED.
+	largestAckedNum  uint32 //should be atomic. the largest ACK we received
+	expectedSeqNum   uint32 //should be atomic. the ACK num we should send to the other side
 
-    windowSize      uint32
+	windowSize uint32
+
+	recvChan chan *proto.TCPPacket //NEWLY ADDED. see details of VRead in the handout.
 }
 
 func (*VTCPConn) VRead(buf []byte) (int, error) // not for milestone I
@@ -195,13 +282,13 @@ import "github.com/google/netstack/tcpip/header"
 const (
 	TcpHeaderLen         = header.TCPMinimumSize
 	TcpPseudoHeaderLen   = 12
-	IpProtoTcp           = header.TCPProtocolNumber
+	ProtoNumTCP          = header.TCPProtocolNumber
 	MaxVirtualPacketSize = 1400
 )
 
-type TCPPacket struct{
-    tcpHeader   *header.TCPFields
-    payload     []byte
+type TCPPacket struct {
+	TcpHeader *header.TCPFields
+	Payload   []byte
 }
 ```
 
@@ -223,3 +310,5 @@ type Transmission struct{
     //...TBD
 }
 ```
+
+
