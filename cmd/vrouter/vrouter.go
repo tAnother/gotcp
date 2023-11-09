@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/vrouter"
 	"time"
@@ -28,7 +28,7 @@ func main() {
 		return
 	}
 
-	router.Node.Start()
+	router.IP.Start()
 
 	// send out request to fill routing table
 	router.SendRipRequest()
@@ -49,6 +49,6 @@ func main() {
 		}
 	}(router)
 
-	repl := ipnode.IpRepl(router.Node)
+	repl := ipstack.IpRepl(router.IP)
 	repl.Run()
 }

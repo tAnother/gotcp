@@ -10,11 +10,9 @@ import (
 )
 
 const (
-	TcpHeaderLen         = header.TCPMinimumSize
-	TcpPseudoHeaderLen   = 12
-	ProtoNumTCP          = uint8(header.TCPProtocolNumber)
-	MaxVirtualPacketSize = 1400
-	MaxWindowSize        = 65535
+	DefaultTcpHeaderLen = header.TCPMinimumSize
+	TcpPseudoHeaderLen  = 12
+	MSS                 = MTU - DefaultTcpHeaderLen - DefaultIpHeaderLen
 )
 
 type TCPPacket struct {
@@ -22,17 +20,17 @@ type TCPPacket struct {
 	Payload   []byte
 }
 
-func NewTCPacket(localPort uint16, destPort uint16, seqNum uint32, ackNum uint32, flags uint8, payload []byte) *TCPPacket {
+func NewTCPacket(localPort uint16, destPort uint16, seqNum uint32, ackNum uint32, flags uint8, payload []byte, windowSize uint16) *TCPPacket {
 	tcpHdr := &header.TCPFields{
 		SrcPort:       localPort,
 		DstPort:       destPort, // Header length is always 20 when no IP option is provided
 		SeqNum:        seqNum,
 		AckNum:        ackNum,
-		DataOffset:    TcpHeaderLen,
+		DataOffset:    DefaultTcpHeaderLen,
 		Flags:         flags,
 		Checksum:      0,
 		UrgentPointer: 0,
-		WindowSize:    MaxWindowSize,
+		WindowSize:    windowSize,
 	}
 	return &TCPPacket{TcpHeader: tcpHdr, Payload: payload}
 }
@@ -67,11 +65,11 @@ func ComputeTCPChecksum(tcpHdr *header.TCPFields,
 	pseudoHeaderBytes[8] = uint8(0)
 	pseudoHeaderBytes[9] = uint8(ProtoNumTCP)
 
-	totalLength := TcpHeaderLen + len(payload)
+	totalLength := DefaultTcpHeaderLen + len(payload)
 	binary.BigEndian.PutUint16(pseudoHeaderBytes[10:12], uint16(totalLength))
 
 	// Turn the TcpFields struct into a byte array
-	headerBytes := header.TCP(make([]byte, TcpHeaderLen))
+	headerBytes := header.TCP(make([]byte, DefaultTcpHeaderLen))
 	headerBytes.Encode(tcpHdr)
 
 	// Compute the checksum for each individual part and combine To combine the
@@ -137,7 +135,7 @@ func TCPFieldsToString(hdr *header.TCPFields) string {
 		hdr.SrcPort, hdr.DstPort, hdr.SeqNum, hdr.AckNum, hdr.DataOffset, TCPFlagsAsString(hdr.Flags), hdr.WindowSize, hdr.Checksum, hdr.UrgentPointer)
 }
 
-func ValidateTCPChecksum(p *TCPPacket, srcIp netip.Addr, dstIp netip.Addr) bool {
+func ValidTCPChecksum(p *TCPPacket, srcIp netip.Addr, dstIp netip.Addr) bool {
 	tcpChecksumFromHeader := p.TcpHeader.Checksum
 	p.TcpHeader.Checksum = 0
 	tcpComputedChecksum := ComputeTCPChecksum(p.TcpHeader, srcIp, dstIp, p.Payload)

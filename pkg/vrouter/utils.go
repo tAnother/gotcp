@@ -3,7 +3,7 @@ package vrouter
 import (
 	"encoding/binary"
 	"fmt"
-	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/proto"
 	"math"
 	"net"
@@ -11,7 +11,7 @@ import (
 )
 
 // Create and marshal rip response to dest
-func createRipResponse(entries []*ipnode.RoutingEntry, dest netip.Addr) ([]byte, error) {
+func createRipResponse(entries []*ipstack.RoutingEntry, dest netip.Addr) ([]byte, error) {
 	response := &proto.RipMsg{
 		Command:    proto.RoutingCmdTypeResponse,
 		NumEntries: uint16(len(entries)),
@@ -24,7 +24,7 @@ func createRipResponse(entries []*ipnode.RoutingEntry, dest netip.Addr) ([]byte,
 	return responseBytes, nil
 }
 
-func routingEntriesToRipEntries(entries []*ipnode.RoutingEntry, dest netip.Addr) []*proto.RipEntry {
+func routingEntriesToRipEntries(entries []*ipstack.RoutingEntry, dest netip.Addr) []*proto.RipEntry {
 	ripEntries := make([]*proto.RipEntry, len(entries))
 	for i, entry := range entries {
 		ripEntries[i] = &proto.RipEntry{
@@ -40,11 +40,11 @@ func routingEntriesToRipEntries(entries []*ipnode.RoutingEntry, dest netip.Addr)
 	return ripEntries
 }
 
-func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) []*ipnode.RoutingEntry {
-	routingEntries := make([]*ipnode.RoutingEntry, len(entries))
+func ripEntriesToRoutingEntries(entries []*proto.RipEntry, proposer netip.Addr) []*ipstack.RoutingEntry {
+	routingEntries := make([]*ipstack.RoutingEntry, len(entries))
 	for i, entry := range entries {
-		routingEntries[i] = &ipnode.RoutingEntry{
-			RouteType: ipnode.RouteTypeRIP,
+		routingEntries[i] = &ipstack.RoutingEntry{
+			RouteType: ipstack.RouteTypeRIP,
 			Prefix:    netip.PrefixFrom(uint32ToIp(entry.Address), ipMaskToPrefixLen(entry.Mask)),
 			NextHop:   proposer,
 			Cost:      min(entry.Cost+1, proto.INFINITY),

@@ -9,30 +9,32 @@ import (
 )
 
 const (
-	MTU = 1400 // maximum-transmission-unit, default 1400 bytes
+	MTU                = 1400 // maximum-transmission-unit, default 1400 bytes
+	DefaultIpHeaderLen = ipv4header.HeaderLen
 
 	ProtoNumRIP  uint8 = 200
 	ProtoNumTest uint8 = 0
+	ProtoNumTCP  uint8 = uint8(header.TCPProtocolNumber)
 )
 
 // var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
-type Packet struct {
+type IPPacket struct {
 	Header  *ipv4header.IPv4Header
 	Payload []byte
 }
 
 // Create a new packet. msg will be truncated if packet length exceeds MTU
-func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *Packet {
+func NewPacket(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *IPPacket {
 	// logger.Printf("Creating a new packet with srcIP: %v, destIP: %v, protoNum: %v, length of msg: %v", srcIP, destIP, protoNum, len(msg))
 	hdr := newHeader(srcIP, destIP, msg, protoNum)
-	return &Packet{
+	return &IPPacket{
 		Header:  hdr,
 		Payload: msg[:hdr.TotalLen-hdr.Len],
 	}
 }
 
-func (p *Packet) Marshal() ([]byte, error) {
+func (p *IPPacket) Marshal() ([]byte, error) {
 	headerBytes, err := p.Header.Marshal()
 	if err != nil {
 		return nil, fmt.Errorf("error marshalling header: %s", err)
@@ -43,7 +45,7 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return bytesToSend, nil
 }
 
-func (p *Packet) Unmarshal(data []byte) error {
+func (p *IPPacket) Unmarshal(data []byte) error {
 	hdr, err := ipv4header.ParseHeader(data)
 	if err != nil {
 		return fmt.Errorf("error parsing header: %v", err)
@@ -67,7 +69,7 @@ func ComputeChecksum(b []byte) uint16 {
 	return checksumInv
 }
 
-func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
+func ValidateIPChecksum(b []byte, fromHeader uint16) uint16 {
 	// Here, we provide both the byte array for the header AND
 	// the initial checksum value that was stored in the header
 	//
@@ -87,9 +89,9 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 func newHeader(srcIP netip.Addr, destIP netip.Addr, msg []byte, protoNum uint8) *ipv4header.IPv4Header {
 	return &ipv4header.IPv4Header{
 		Version:  4,
-		Len:      20, // Header length is always 20 when no IP option is provided
+		Len:      DefaultIpHeaderLen, // Header length is always 20 when no IP option is provided
 		TOS:      0,
-		TotalLen: min(ipv4header.HeaderLen+len(msg), MTU),
+		TotalLen: min(DefaultIpHeaderLen+len(msg), MTU),
 		ID:       0,
 		Flags:    0,
 		FragOff:  0,

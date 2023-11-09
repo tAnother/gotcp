@@ -11,6 +11,25 @@
 
 ## Send and Recv CLI over non-lossy links
 
+### Recv Test Case
+
+```
+s 0 aabbccdd
+r 1 4       ==> aabb
+s 0 eeff
+r 1 12      ==> ccddeeff
+r 1 6       ==> block
+s 0 aabb    ==> aabb
+r 1 2       ==> block
+s 0 aabb    ==> aa
+s 0 eeffgghh 
+r 1 4       ==> bbee
+```
+
+**Expected:**
+![Alt text](./md_images/tcp/terminal-read.png)
+![Alt text](./md_images/tcp/expected-non-lossy-read.png)
+
 ## Retransmission
 
 ## Connection teardown

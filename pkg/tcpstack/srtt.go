@@ -1,4 +1,4 @@
-package proto
+package tcpstack
 
 type SRTT struct {
 	alpha  float64

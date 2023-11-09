@@ -2,42 +2,36 @@ package vhost
 
 import (
 	"fmt"
-	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/lnxconfig"
 	"iptcp-nora-yu/pkg/proto"
-	"net/netip"
+	"log"
+	"os"
 
-	"github.com/google/netstack/tcpip/header"
+	"iptcp-nora-yu/pkg/tcpstack"
 )
 
+var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+
 type VHost struct {
-	Node *ipnode.Node
+	TCP *tcpstack.TCPGlobalInfo
 }
 
 func New(config *lnxconfig.IPConfig) (*VHost, error) {
-	node, err := ipnode.New(config)
+	ipst, err := ipstack.Init(config)
 	if err != nil {
 		return nil, err
 	}
-	node.RegisterRecvHandler(proto.ProtoNumTest, testRecvHandler)
-	return &VHost{node}, nil
+	tcpst, err := tcpstack.Init(ipst)
+	if err != nil {
+		return nil, err
+	}
+	host := &VHost{tcpst}
+	ipst.RegisterRecvHandler(proto.ProtoNumTest, testRecvHandler)
+	return host, nil
 }
 
-func testRecvHandler(packet *proto.Packet, node *ipnode.Node) {
+func testRecvHandler(packet *proto.IPPacket) {
 	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n",
 		packet.Header.Src, packet.Header.Dst, packet.Header.TTL, packet.Payload)
-}
-
-func (v *VHost) GetLocalAddr() netip.Addr {
-	for _, i := range v.Node.Interfaces {
-		return i.AssignedIP
-	}
-	return netip.Addr{}
-}
-
-func (h *VHost) SendTcpPacket(p *proto.TCPPacket, srcIP netip.Addr, destIP netip.Addr) error {
-	p.TcpHeader.Checksum = proto.ComputeTCPChecksum(p.TcpHeader, srcIP, destIP, p.Payload)
-	tcpHeaderBytes := make(header.TCP, proto.TcpHeaderLen)
-	tcpHeaderBytes.Encode(p.TcpHeader)
-	return h.Node.Send(destIP, tcpHeaderBytes, uint8(proto.ProtoNumTCP))
 }

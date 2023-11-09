@@ -10,12 +10,12 @@ import (
 )
 
 // Creates and binds the listener socket
-func NewListenerSocket(port uint16, addr netip.Addr) *VTCPListener {
+func NewListenerSocket(t *TCPGlobalInfo, port uint16) *VTCPListener {
 	listener := &VTCPListener{
-		socketId: atomic.AddInt32(&socketId, 1),
-		addr:     addr,
+		t:        t,
+		socketId: atomic.AddInt32(&t.socketNum, 1),
 		port:     port,
-		pendingSocket: make(chan struct {
+		pendingSocketC: make(chan struct {
 			*proto.TCPPacket
 			netip.Addr
 		}),
@@ -25,53 +25,53 @@ func NewListenerSocket(port uint16, addr netip.Addr) *VTCPListener {
 
 // Three-way handshake for receiver side happens here.
 func (l *VTCPListener) VAccept() (*VTCPConn, error) {
-	select {
-	case pair := <-l.pendingSocket: //the incoming TCP packet should be valid: matching process is done.
-		srcIP := pair.Addr
-		tcpPacket := pair.TCPPacket
+	pair := <-l.pendingSocketC
+	srcIP := pair.Addr
+	tcpPacket := pair.TCPPacket
 
-		// 1. check if it's an only-SYN packet
-		if tcpPacket.TcpHeader.Flags != header.TCPFlagSyn {
-			return nil, fmt.Errorf("error accpeting new conn. Flag is not only-SYN but %v", tcpPacket.TcpHeader.Flags)
-		}
-
-		// 2. create a new normal socket. state should be SYN_RECV at this point
-		endpoint := TCPEndpointID{
-			localAddr:  l.addr,
-			localPort:  l.port,
-			remoteAddr: srcIP,
-			remotePort: tcpPacket.TcpHeader.SrcPort,
-		}
-		if socketExists(endpoint) {
-			return nil, fmt.Errorf("socket already exsists with local vip %v port %v and remote vip %v port %v", endpoint.localAddr, endpoint.localPort, endpoint.remoteAddr, endpoint.remotePort)
-		}
-		conn := NewSocket(SYN_RECEIVED, endpoint, tcpPacket.TcpHeader.SeqNum)
-		bindSocket(endpoint, conn)
-
-		// 3. send back SYN+ACK packet
-		newTcpPacket := proto.NewTCPacket(endpoint.localPort, endpoint.remotePort,
-			conn.localInitSeqNum, tcpPacket.TcpHeader.SeqNum+1,
-			header.TCPFlagSyn|header.TCPFlagAck, make([]byte, 0))
-		conn.expectedSeqNum = conn.remoteInitSeqNum + 1
-		err := tcb.Driver.SendTcpPacket(newTcpPacket, endpoint.localAddr, endpoint.remoteAddr)
-		if err != nil {
-			//TODO: should we delete the socket from the table????
-			deleteSocket(endpoint)
-			return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
-		}
-
-		//4. state machine: syn_recvd --> established
-		err = handleSynRecvd(conn, endpoint)
-		if err != nil {
-			return nil, err
-		}
-
-		//5. connection established.
-		go conn.handleConnection()
-		fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
-		return conn, nil
+	// 1. check if it's an only-SYN packet
+	if tcpPacket.TcpHeader.Flags != header.TCPFlagSyn {
+		return nil, fmt.Errorf("error accpeting new conn. Flag is not only-SYN but %v", tcpPacket.TcpHeader.Flags)
 	}
 
+	// 2. create a new normal socket. state should be SYN_RECV at this point
+	endpoint := TCPEndpointID{
+		LocalAddr:  l.t.localAddr,
+		LocalPort:  l.port,
+		RemoteAddr: srcIP,
+		RemotePort: tcpPacket.TcpHeader.SrcPort,
+	}
+	if l.t.socketExists(endpoint) {
+		return nil, fmt.Errorf("socket already exsists with local vip %v port %v and remote vip %v port %v", endpoint.LocalAddr, endpoint.LocalPort, endpoint.RemoteAddr, endpoint.RemotePort)
+	}
+	conn := NewSocket(l.t, SYN_RECEIVED, endpoint, tcpPacket.TcpHeader.SeqNum)
+	l.t.bindSocket(endpoint, conn)
+
+	// 3. send back SYN+ACK packet
+	conn.expectedSeqNum.Store(conn.remoteInitSeqNum + 1)
+	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
+		conn.localInitSeqNum, conn.expectedSeqNum.Load(),
+		header.TCPFlagSyn|header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
+
+	err := send(l.t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
+	if err != nil {
+		l.t.deleteSocket(endpoint)
+		return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
+	}
+
+	logger.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+
+	// go conn.handleRecvCall()
+	go conn.run()
+	return conn, nil
 }
 
-// func (l *VTCPListener) VClose() error // not for milestone I
+func (l *VTCPListener) VClose() error {
+	l.t.tableMu.Lock()
+	defer l.t.tableMu.Unlock()
+	if _, ok := l.t.listenerTable[l.port]; !ok {
+		return fmt.Errorf("listener with port %v already closed", l.port)
+	}
+	delete(l.t.listenerTable, l.port)
+	return nil
+}

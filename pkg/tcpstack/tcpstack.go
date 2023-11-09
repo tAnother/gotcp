@@ -1,189 +1,186 @@
 package tcpstack
 
 import (
+	"errors"
 	"fmt"
-	"iptcp-nora-yu/pkg/ipnode"
+	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/proto"
-	"iptcp-nora-yu/pkg/vhost"
+
 	"log"
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/netstack/tcpip/header"
 )
 
-var tcb *VTCPGlobalInfo
-
-var socketId int32 = -1
-
-var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
-
-// TODO: Placeholder
-const (
-	BUFFER_CAPACITY = 1 << 8
-)
-
-type State string
+var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile) // TODO: provide config
 
 type TCPEndpointID struct {
-	localAddr  netip.Addr
-	localPort  uint16
-	remoteAddr netip.Addr
-	remotePort uint16
+	LocalAddr  netip.Addr
+	LocalPort  uint16
+	RemoteAddr netip.Addr
+	RemotePort uint16
 }
 
-type VTCPGlobalInfo struct {
-	LocalAddr     netip.Addr
-	ListenerTable map[uint16]*VTCPListener //port num: listener
-	ConnTable     map[TCPEndpointID]*VTCPConn
-	TableMu       sync.RWMutex
-	Driver        *vhost.VHost
+type TCPGlobalInfo struct {
+	IP        *ipstack.IPGlobalInfo
+	localAddr netip.Addr
+
+	listenerTable map[uint16]*VTCPListener // key: port num
+	connTable     map[TCPEndpointID]*VTCPConn
+	tableMu       sync.RWMutex // TODO: make it finer grained?
+
+	socketNum int32 // a counter that keeps track of the most recent socket id
+
+	// TODO: add extra maps for faster querying by socket id?
 }
 
 type VTCPListener struct {
-	socketId      int32
-	addr          netip.Addr
-	port          uint16
-	pendingSocket chan struct {
+	t *TCPGlobalInfo // a pointer to the tcp global state struct
+
+	socketId       int32
+	port           uint16
+	pendingSocketC chan struct {
 		*proto.TCPPacket
 		netip.Addr
-	} //since we need info about TCP header and the srcIP
+	} // since we need info about TCP header and the srcIP
 }
 
-type VTCPConn struct { //represents a TCP socket
-	socketId   int32
-	localAddr  netip.Addr
-	localPort  uint16
-	remoteAddr netip.Addr
-	remotePort uint16
+type VTCPConn struct { // represents a TCP socket
+	t *TCPGlobalInfo // a pointer to the tcp global state struct
 
-	sendBuff *proto.CircBuff
-	recvBuff *proto.CircBuff
+	TCPEndpointID
+	socketId int32
 
 	state   State
 	stateMu sync.Mutex
 
-	srtt             *proto.SRTT
-	localInitSeqNum  uint32 //should be atomic.
-	remoteInitSeqNum uint32
-	largestAckedNum  uint32 //should be atomic. the largest ACK we received
-	expectedSeqNum   uint32 //should be atomic. the ACK num we should send to the other side
+	srtt             *SRTT
+	localInitSeqNum  uint32         // unsafe - should stay unchanged once initialized
+	remoteInitSeqNum uint32         // unsafe - should stay unchanged once the connection is established
+	seqNum           *atomic.Uint32 // curr seqNum. increment atomically
+	largestAck       *atomic.Uint32 // the largest ACK we received
+	expectedSeqNum   *atomic.Uint32 // the ACK num we should send to the other side
+	windowSize       *atomic.Uint32
 
-	windowSize uint32
+	sendBuf *sendBuf
+	recvBuf *CircBuff
 
-	recvChan chan *proto.TCPPacket //see details of VRead in the handout.
+	recvChan chan *proto.TCPPacket // for parsing tcp packets dispatched to this connection
+	readWait chan struct{}
 }
 
-func Init(addr netip.Addr, host *vhost.VHost) {
-	tcb = &VTCPGlobalInfo{
-		ListenerTable: make(map[uint16]*VTCPListener),
-		ConnTable:     make(map[TCPEndpointID]*VTCPConn),
-		TableMu:       sync.RWMutex{},
-		LocalAddr:     addr,
-		Driver:        host,
+func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
+	// extract local addr
+	var localAddr netip.Addr
+	for _, i := range ip.Interfaces {
+		localAddr = i.AssignedIP
+		break
 	}
-	host.Node.RegisterRecvHandler(uint8(proto.ProtoNumTCP), tcpRecvHandler)
+	if !localAddr.IsValid() {
+		return nil, errors.New("invalid local ip address")
+	}
+
+	t := &TCPGlobalInfo{
+		IP:            ip,
+		localAddr:     localAddr,
+		listenerTable: make(map[uint16]*VTCPListener),
+		connTable:     make(map[TCPEndpointID]*VTCPConn),
+		tableMu:       sync.RWMutex{},
+		socketNum:     -1,
+	}
+	ip.RegisterRecvHandler(proto.ProtoNumTCP, tcpRecvHandler(t))
+
+	return t, nil
 }
 
 /************************************ TCP API ***********************************/
 // VListen creates a new listening socket bound to the specified port
-func VListen(port uint16) (*VTCPListener, error) {
-	//1. check the listener table to see if the port is already in use
-	if isPortInUse(port) {
+func VListen(t *TCPGlobalInfo, port uint16) (*VTCPListener, error) {
+	// check the listener table to see if the port is already in use
+	if t.isPortInUse(port) {
 		return nil, fmt.Errorf("port %v already in use", port)
 	}
-	// 2. If not, create a new listener socket
-	addr := tcb.LocalAddr
-	if !addr.IsValid() {
-		return nil, fmt.Errorf("error finding the local addr")
-	}
-	l := NewListenerSocket(port, addr)
-	bindListener(port, l)
-	fmt.Printf("Created a listener socket with id %v\n", l.socketId)
+	// create a new listener socket
+	l := NewListenerSocket(t, port)
+	t.bindListener(port, l)
+	logger.Printf("Created a listener socket with id %v\n", l.socketId)
 	return l, nil
 }
 
-func VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
-	//1. create a new endpoint ID with a random port number
+func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error) {
+	// create a new endpoint ID with a random port number
 	endpoint := TCPEndpointID{
-		localAddr:  tcb.LocalAddr,
-		localPort:  generateRandomPortNum(),
-		remoteAddr: addr,
-		remotePort: port,
+		LocalAddr:  t.localAddr,
+		LocalPort:  generateRandomPortNum(t),
+		RemoteAddr: addr,
+		RemotePort: port,
 	}
+	// create the socket
+	conn := NewSocket(t, SYN_SENT, endpoint, 0)
+	t.bindSocket(endpoint, conn)
 
-	//2.check if the conn is in the table
-	if _, ok := tcb.ConnTable[endpoint]; ok {
-		return nil, fmt.Errorf("error connecting. The socket with local port %v, remote addr %v and port %v already exists", endpoint.localPort, addr, port)
-	}
-
-	//3. create the socket
-	conn := NewSocket(SYN_SENT, endpoint, 0)
-	bindSocket(endpoint, conn)
-
-	//4. create and send syn tcp packet
-	newTcpPacket := proto.NewTCPacket(endpoint.localPort, endpoint.remotePort,
+	// create and send syn tcp packet
+	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
 		conn.localInitSeqNum, 0,
-		header.TCPFlagSyn, make([]byte, 0))
-	err := tcb.Driver.SendTcpPacket(newTcpPacket, endpoint.localAddr, endpoint.remoteAddr)
+		header.TCPFlagSyn, make([]byte, 0), BUFFER_CAPACITY)
+
+	err := send(t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
 	if err != nil {
-		//TODO: should we delete the socket from the table????
-		deleteSocket(endpoint)
-		return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.localAddr, endpoint.localPort), netip.AddrPortFrom(addr, port))
+		t.deleteSocket(endpoint)
+		return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
 	}
 
-	//5. state machine: syn_rent --> established
-	err = handleSynSent(conn, endpoint)
-	if err != nil {
-		return nil, err
-	}
-	go conn.handleConnection()
-	fmt.Printf("Created a new socket with id %v\n", conn.socketId)
+	logger.Printf("Created a new socket with id %v\n", conn.socketId)
+
+	// go conn.handleRecvCall()
+	go conn.run()
 	return conn, nil
 }
 
-/************************************ TCP Recv Handler ***********************************/
-func tcpRecvHandler(packet *proto.Packet, node *ipnode.Node) {
-	tcpPacket := new(proto.TCPPacket)
-	tcpPacket.Unmarshal(packet.Payload[:packet.Header.TotalLen-packet.Header.Len])
-	if valid := proto.ValidateTCPChecksum(tcpPacket, packet.Header.Src, packet.Header.Dst); !valid {
-		logger.Printf("packet dropped because checksum validation failed")
-		return
-	}
-	fmt.Printf("Received TCP packet from %s\tIP Header:  %v\tTCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-		packet.Header.Src, packet.Header, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
+/************************************ TCP Handler ***********************************/
 
-	if tcb.LocalAddr != packet.Header.Dst {
-		logger.Printf("packet dropped because the packet with dst %v is not for %v.", packet.Header.Dst, tcb.LocalAddr)
-		return
-	}
+func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
+	return func(ipPacket *proto.IPPacket) {
+		// unmarshal and validate the packet
+		tcpPacket := new(proto.TCPPacket)
+		tcpPacket.Unmarshal(ipPacket.Payload[:ipPacket.Header.TotalLen-ipPacket.Header.Len])
+		logger.Printf("\nReceived TCP packet from %s\tIP Header:  %v\tTCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
+			ipPacket.Header.Src, ipPacket.Header, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
 
-	//matching process
-	endpoint := TCPEndpointID{
-		localAddr:  tcb.LocalAddr,
-		localPort:  tcpPacket.TcpHeader.DstPort,
-		remoteAddr: packet.Header.Src,
-		remotePort: tcpPacket.TcpHeader.SrcPort,
-	}
-	forwardPacket(endpoint, tcpPacket)
-}
-
-func forwardPacket(endpoint TCPEndpointID, packet *proto.TCPPacket) {
-	tcb.TableMu.RLock()
-	defer tcb.TableMu.RUnlock()
-
-	if s, ok := tcb.ConnTable[endpoint]; !ok {
-		l, ok := tcb.ListenerTable[endpoint.localPort]
-		if !ok {
-			logger.Printf("packet dropped because there's no matching listener and normal sockets for port %v.", endpoint.localPort)
+		if !proto.ValidTCPChecksum(tcpPacket, ipPacket.Header.Src, ipPacket.Header.Dst) {
+			logger.Printf("packet dropped because checksum validation failed\n")
 			return
 		}
-		l.pendingSocket <- struct {
-			*proto.TCPPacket
-			netip.Addr
-		}{packet, endpoint.remoteAddr}
-	} else {
-		s.recvChan <- packet
+		if t.localAddr != ipPacket.Header.Dst {
+			logger.Printf("packet dropped because the packet with dst %v is not for %v.\n", ipPacket.Header.Dst, t.localAddr)
+			return
+		}
+
+		// find and forward the packet to corresponding socket
+		endpoint := TCPEndpointID{
+			LocalAddr:  ipPacket.Header.Dst,
+			LocalPort:  tcpPacket.TcpHeader.DstPort,
+			RemoteAddr: ipPacket.Header.Src,
+			RemotePort: tcpPacket.TcpHeader.SrcPort,
+		}
+		t.tableMu.RLock()
+		defer t.tableMu.RUnlock()
+
+		if s, ok := t.connTable[endpoint]; !ok {
+			l, ok := t.listenerTable[endpoint.LocalPort]
+			if !ok {
+				logger.Printf("packet dropped because there's no matching listener and normal sockets for port %v.\n", endpoint.LocalPort)
+				return
+			}
+			l.pendingSocketC <- struct {
+				*proto.TCPPacket
+				netip.Addr
+			}{tcpPacket, endpoint.RemoteAddr}
+		} else {
+			s.recvChan <- tcpPacket
+		}
 	}
 }

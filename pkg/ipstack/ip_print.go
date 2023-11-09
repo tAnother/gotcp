@@ -1,13 +1,13 @@
-package ipnode
+package ipstack
 
 import "fmt"
 
 // List (interface, assigned prefix, up/down state) as strings
-func (n *Node) GetInterfacesString() []string {
-	size := len(n.Interfaces)
+func (s *IPGlobalInfo) GetInterfacesString() []string {
+	size := len(s.Interfaces)
 	res := make([]string, size)
 	index := 0
-	for ifname, i := range n.Interfaces {
+	for ifname, i := range s.Interfaces {
 		res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, i.getAddrPrefixString(), i.getIsDownString())
 		index += 1
 	}
@@ -15,15 +15,15 @@ func (n *Node) GetInterfacesString() []string {
 }
 
 // List (interface, vip of neighbor, udp of neighbor) as strings
-func (n *Node) GetNeighborsString() []string {
+func (s *IPGlobalInfo) GetNeighborsString() []string {
 	size := 0
-	for _, neighbors := range n.IFNeighbors {
+	for _, neighbors := range s.IFNeighbors {
 		size += len(neighbors)
 	}
 
 	res := make([]string, size)
 	index := 0
-	for ifname, neighbors := range n.IFNeighbors {
+	for ifname, neighbors := range s.IFNeighbors {
 		for _, neighbor := range neighbors {
 			res[index] = fmt.Sprintf("%s\t%s\t%s\n", ifname, neighbor.getVIPString(), neighbor.getUDPString())
 			index += 1
@@ -33,13 +33,13 @@ func (n *Node) GetNeighborsString() []string {
 }
 
 // List (route type, prefix, nexthop) as strings
-func (n *Node) GetRoutingTableString() []string {
-	n.RoutingTableMu.RLock()
-	defer n.RoutingTableMu.RUnlock()
-	size := len(n.RoutingTable)
+func (s *IPGlobalInfo) GetRoutingTableString() []string {
+	s.RoutingTableMu.RLock()
+	defer s.RoutingTableMu.RUnlock()
+	size := len(s.RoutingTable)
 	res := make([]string, size)
 	index := 0
-	for prefix, rt := range n.RoutingTable {
+	for prefix, rt := range s.RoutingTable {
 		res[index] = fmt.Sprintf("%s\t%s\t%s\t%s\n", string(rt.RouteType), prefix.String(), rt.getNextHopString(), rt.getCostString())
 		index += 1
 	}

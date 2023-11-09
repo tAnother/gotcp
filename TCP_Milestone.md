@@ -29,11 +29,11 @@
 
   - How will you implement retransmissions?
 
-     Not sure yet.
+     We should have a queue to record each in-flight packet (sent but not acked) and early-arrival packets. For each packet, we should record the time it was sent initially. If time expires (RTO?), the packet should be retransmitted.  Therefore, we should set a retrasmitted bool field of the packet item as true. If times out again, drop the packet?
 
   - In what circumstances would a socket allocation be deleted? What could be hindering when doing so? Note that the state CLOSED would not be equivalent as being deleted.
 
-    Not sure yet.
+    If handshake timeout or the connection is closed or enter some special state (TIME_WAIT)?
 
 ## Milestone II
 

@@ -1,4 +1,4 @@
-package ipnode
+package ipstack
 
 import (
 	"fmt"
@@ -14,16 +14,14 @@ import (
 
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
-type RecvHandlerFunc func(*proto.Packet, *Node)
-
-type Node struct {
+type IPGlobalInfo struct {
 	Interfaces     map[string]*Interface          // interface name -> interface instance
 	IFNeighbors    map[string][]*Neighbor         // interface name -> a list of neighbors on that interface
 	RoutingTable   map[netip.Prefix]*RoutingEntry // aka forwarding table
 	RoutingTableMu sync.RWMutex
 
 	routingMode  lnxconfig.RoutingMode
-	recvHandlers map[uint8]RecvHandlerFunc
+	recvHandlers map[uint8]func(*proto.IPPacket)
 
 	// router specific
 	RipNeighbors []netip.Addr
@@ -64,31 +62,31 @@ type RoutingEntry struct {
 }
 
 // Init a node instance
-func New(config *lnxconfig.IPConfig) (*Node, error) {
-	node := &Node{
+func Init(config *lnxconfig.IPConfig) (*IPGlobalInfo, error) {
+	s := &IPGlobalInfo{
 		Interfaces:   make(map[string]*Interface),
 		IFNeighbors:  make(map[string][]*Neighbor),
 		RoutingTable: make(map[netip.Prefix]*RoutingEntry),
-		recvHandlers: make(map[uint8]RecvHandlerFunc),
+		recvHandlers: make(map[uint8]func(*proto.IPPacket)),
 		routingMode:  config.RoutingMode,
 		RipNeighbors: make([]netip.Addr, len(config.RipNeighbors)),
 	}
-	copy(node.RipNeighbors, config.RipNeighbors)
-	if node.routingMode == lnxconfig.RoutingTypeNone {
-		node.routingMode = lnxconfig.RoutingTypeStatic
+	copy(s.RipNeighbors, config.RipNeighbors)
+	if s.routingMode == lnxconfig.RoutingTypeNone {
+		s.routingMode = lnxconfig.RoutingTypeStatic
 	}
 
 	for _, ifcfg := range config.Interfaces {
-		node.Interfaces[ifcfg.Name] = &Interface{
+		s.Interfaces[ifcfg.Name] = &Interface{
 			Name:           ifcfg.Name,
 			AssignedIP:     ifcfg.AssignedIP,
 			AssignedPrefix: ifcfg.AssignedPrefix,
 			UDPAddr:        ifcfg.UDPAddr,
 		}
 
-		node.IFNeighbors[ifcfg.Name] = make([]*Neighbor, 0)
+		s.IFNeighbors[ifcfg.Name] = make([]*Neighbor, 0)
 
-		node.RoutingTable[ifcfg.AssignedPrefix] = &RoutingEntry{
+		s.RoutingTable[ifcfg.AssignedPrefix] = &RoutingEntry{
 			RouteType:    RouteTypeLocal,
 			Prefix:       ifcfg.AssignedPrefix,
 			LocalNextHop: ifcfg.Name,
@@ -102,11 +100,11 @@ func New(config *lnxconfig.IPConfig) (*Node, error) {
 			UDPAddr: ncfg.UDPAddr,
 			IFName:  ncfg.InterfaceName,
 		}
-		node.IFNeighbors[ncfg.InterfaceName] = append(node.IFNeighbors[ncfg.InterfaceName], neighbor)
+		s.IFNeighbors[ncfg.InterfaceName] = append(s.IFNeighbors[ncfg.InterfaceName], neighbor)
 	}
 
 	for prefix, addr := range config.StaticRoutes {
-		node.RoutingTable[prefix] = &RoutingEntry{
+		s.RoutingTable[prefix] = &RoutingEntry{
 			RouteType: RouteTypeStatic,
 			Prefix:    prefix,
 			NextHop:   addr,
@@ -114,26 +112,26 @@ func New(config *lnxconfig.IPConfig) (*Node, error) {
 		}
 	}
 
-	return node, nil
+	return s, nil
 }
 
 /************************************ IP API ***********************************/
 
 // Start the node
-func (n *Node) Start() {
-	n.bindUDP()
-	for _, i := range n.Interfaces {
-		go n.listenOn(i)
+func (s *IPGlobalInfo) Start() {
+	s.bindUDP()
+	for _, i := range s.Interfaces {
+		go s.listenOn(i)
 	}
 }
 
-func (n *Node) RegisterRecvHandler(protoNum uint8, callback RecvHandlerFunc) {
-	n.recvHandlers[protoNum] = callback
+func (s *IPGlobalInfo) RegisterRecvHandler(protoNum uint8, callback func(*proto.IPPacket)) {
+	s.recvHandlers[protoNum] = callback
 }
 
 // Turn up/turn down an interface
-func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
-	iface, ok := n.Interfaces[ifname]
+func (s *IPGlobalInfo) SetInterfaceIsDown(ifname string, down bool) error {
+	iface, ok := s.Interfaces[ifname]
 	if !ok {
 		return fmt.Errorf("[SetInterfaceIsDown] interface %s does not exist", ifname)
 	}
@@ -142,28 +140,26 @@ func (n *Node) SetInterfaceIsDown(ifname string, down bool) error {
 }
 
 // Send msg to destIP
-func (n *Node) Send(destIP netip.Addr, msg []byte, protoNum uint8) error {
+func (s *IPGlobalInfo) Send(destIP netip.Addr, msg []byte, protoNum uint8) error {
 	if protoNum != proto.ProtoNumRIP && protoNum != proto.ProtoNumTest && protoNum != proto.ProtoNumTCP {
 		return fmt.Errorf("invalid protocol num %d", protoNum)
 	}
 
-	srcIF, remoteAddr, err := n.FindLinkLayerSrcDst(destIP)
+	srcIF, remoteAddr, err := s.FindLinkLayerSrcDst(destIP)
 	if err != nil {
 		return err
 	}
 	packet := proto.NewPacket(srcIF.AssignedIP, destIP, msg, protoNum)
-	err = n.ForwardPacket(srcIF, remoteAddr, packet)
+	err = ForwardPacket(srcIF, remoteAddr, packet)
 	return err
 }
 
 // Send packet to neighbor on interface srcIF
-func (n *Node) ForwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto.Packet) error {
+func ForwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto.IPPacket) error {
 	if srcIF.isDown {
-		// logger.Printf("srcIF %v is down. Dropping packet...\n", srcIF.Name)
 		return nil
 	}
 	if srcIF.conn == nil {
-		// logger.Printf("Initializing a udp connection on interface %v...\n", srcIF.Name)
 		listenAddr := net.UDPAddrFromAddrPort(srcIF.UDPAddr)
 		conn, err := net.ListenUDP("udp4", listenAddr)
 		if err != nil {
@@ -192,28 +188,26 @@ func (n *Node) ForwardPacket(srcIF *Interface, dst netip.AddrPort, packet *proto
 	if err != nil {
 		return fmt.Errorf("error writing to socket: %v", err)
 	}
-	// logger.Printf("Sent %d bytes from %v(%v) to %v\n", bytesWritten, srcIF.AssignedIP, srcIF.Name, udpAddr)
 	return nil
 }
 
 // Return the link layer src (interface) and dest (remote addr)
-func (n *Node) FindLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) {
-	nextHop, altDestIP := n.findNextHopEntry(destIP)
-	// logger.Printf("Next hop: %v; previous step (alternative destIP): <%v>\n", nextHop, altDestIP)
+func (s *IPGlobalInfo) FindLinkLayerSrcDst(destIP netip.Addr) (*Interface, netip.AddrPort, error) {
+	nextHop, altDestIP := s.findNextHopEntry(destIP)
 	if nextHop == nil || nextHop.LocalNextHop == "" {
 		return nil, netip.AddrPort{}, fmt.Errorf("error finding local next hop for the test packet")
 	}
 	if !altDestIP.IsValid() {
 		altDestIP = destIP
 	}
-	srcIF := n.Interfaces[nextHop.LocalNextHop]
+	srcIF := s.Interfaces[nextHop.LocalNextHop]
 	// if it's for this local interface
 	if srcIF.AssignedIP == destIP {
 		return srcIF, srcIF.UDPAddr, nil
 	}
 
 	// if it's for the nbhr of this local interface, find the neighbor
-	nbhr := n.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
+	nbhr := s.findNextHopNeighbor(nextHop.LocalNextHop, altDestIP)
 	if nbhr == nil {
 		return nil, netip.AddrPort{}, fmt.Errorf("destIP not found in the neighbors of %v", nextHop.LocalNextHop)
 	}

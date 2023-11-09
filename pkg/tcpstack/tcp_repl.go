@@ -3,23 +3,24 @@ package tcpstack
 import (
 	"fmt"
 	"io"
-	"iptcp-nora-yu/pkg/ipnode"
 	"iptcp-nora-yu/pkg/repl"
 	"net/netip"
 	"strconv"
 	"strings"
 )
 
-func TcpRepl(node *ipnode.Node) *repl.REPL {
+func TcpRepl(t *TCPGlobalInfo) *repl.REPL {
 	r := repl.NewRepl()
-	r.AddCommand("a", acceptHandler(node), "Listens and accpets a port. usage: a <port>")
-	r.AddCommand("ls", lsHandler(node), "Lists all sockets. usage: ls")
-	r.AddCommand("c", connectHandler(node), "Creates a new socket that connects to the specified virtual IP address and port. usage: c <vip> <port>")
-
+	r.AddCommand("a", acceptHandler(t), "Listens and accpets a port. usage: a <port>")
+	r.AddCommand("ls", lsHandler(t), "Lists all sockets. usage: ls")
+	r.AddCommand("c", connectHandler(t), "Creates a new socket that connects to the specified virtual IP address and port. usage: c <vip> <port>")
+	r.AddCommand("cl", closeHandler(t), "Closes a socket. usage: cl <socket ID>")
+	r.AddCommand("r", readBytesHandler(t), "Read n bytes of data on a socket. usage: r <socket ID> <numbytes>")
+	r.AddCommand("s", sendBytesHandler(t), "Send n bytes of data on a socket. usage: r <socket ID> <bytes to send>")
 	return r
 }
 
-func acceptHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
+func acceptHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 	return func(input string, config *repl.REPLConfig) error {
 		args := strings.Split(input, " ")
 		if len(args) != 2 {
@@ -33,16 +34,16 @@ func acceptHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
 			return fmt.Errorf("input %v is out of range", port)
 		}
 
-		listener, err := VListen(uint16(port))
+		l, err := VListen(t, uint16(port))
 		if err != nil {
 			return err
 		}
 
-		go func() error {
+		go func() {
 			for {
-				_, err := listener.VAccept()
+				_, err := l.VAccept()
 				if err != nil {
-					return err
+					io.WriteString(config.Writer, fmt.Sprintln(err))
 				}
 			}
 		}()
@@ -50,7 +51,7 @@ func acceptHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
 	}
 }
 
-func connectHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
+func connectHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 	return func(input string, config *repl.REPLConfig) error {
 		args := strings.Split(input, " ")
 		if len(args) != 3 {
@@ -64,37 +65,109 @@ func connectHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
 			return fmt.Errorf("input %v is out of range", port)
 		}
 
-		go func() error {
-			_, err := VConnect(netip.MustParseAddr(args[1]), uint16(port))
-			if err != nil {
-				return err
-			}
-			return nil
-		}()
-		return nil
+		_, err = VConnect(t, netip.MustParseAddr(args[1]), uint16(port))
+		return err
 	}
 }
 
-func lsHandler(node *ipnode.Node) func(string, *repl.REPLConfig) error {
+func lsHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 	return func(input string, config *repl.REPLConfig) error {
 		args := strings.Split(input, " ")
 		if len(args) != 1 {
 			return fmt.Errorf("usage: ls")
 		}
 
-		sockets := GetSocketTableString()
+		sockets := t.GetSocketTableString()
 
-		_, err := io.WriteString(config.Writer, "SIDt\tLAddr\tLPort\tRAddr\tRPort\tStatus\n")
+		_, err := io.WriteString(config.Writer, "SID\tLAddr\t\tLPort\tRAddr\t\tRPort\tStatus\n")
 		if err != nil {
-			return fmt.Errorf("lsHandler cannot write the header to stdout")
+			return err
 		}
 
 		for _, socketsInfo := range sockets {
 			_, err := io.WriteString(config.Writer, socketsInfo)
 			if err != nil {
-				return fmt.Errorf("lsHandler cannot write sockets to stdout")
+				return err
 			}
 		}
+		return nil
+	}
+}
+
+func closeHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
+	return func(input string, config *repl.REPLConfig) error {
+		args := strings.Split(input, " ")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: cl <socket id>")
+		}
+		id, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("<socket ID> has to be an integer")
+		}
+		l := t.findListenerSocket(int32(id))
+		if l != nil {
+			return l.VClose()
+		}
+		conn := t.findNormalSocket(int32(id))
+		if conn != nil {
+			return conn.VClose()
+		}
+		return fmt.Errorf("socket id %v not found", id)
+	}
+}
+
+func readBytesHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
+	return func(input string, config *repl.REPLConfig) error {
+		args := strings.Split(input, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("usage: r <socket ID> <numbytes>")
+		}
+		id, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("<socket ID> has to be an integer")
+		}
+
+		numBytes, err := strconv.Atoi(args[2])
+		if err != nil || numBytes < 0 {
+			return fmt.Errorf("<numbytes> has to be a non-negative integer")
+		}
+
+		conn := t.findNormalSocket(int32(id))
+		if conn == nil {
+			return fmt.Errorf("cannot find socket %v", id)
+		}
+
+		buffer := make([]byte, numBytes)
+		bytesRead, err := conn.VRead(buffer)
+		if err != nil {
+			return err
+		}
+		io.WriteString(config.Writer, fmt.Sprintf("Read %v bytes: %v\n", bytesRead, string(buffer)))
+		return nil
+	}
+}
+
+func sendBytesHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
+	return func(input string, config *repl.REPLConfig) error {
+		args := strings.Split(input, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("usage: r <socket ID> <numbytes>")
+		}
+		id, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("<socket ID> has to be an integer")
+		}
+		conn := t.findNormalSocket(int32(id))
+		if conn == nil {
+			return fmt.Errorf("cannot find socket %v", id)
+		}
+
+		data := args[2]
+		bytesWritten, err := conn.VWrite([]byte(data))
+		if err != nil {
+			return err
+		}
+		io.WriteString(config.Writer, fmt.Sprintf("Wrote %v bytes\n", bytesWritten))
 		return nil
 	}
 }
