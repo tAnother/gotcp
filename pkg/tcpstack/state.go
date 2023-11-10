@@ -1,6 +1,7 @@
 package tcpstack
 
 import (
+	"container/heap"
 	"iptcp-nora-yu/pkg/proto"
 
 	"github.com/google/netstack/tcpip/header"
@@ -136,53 +137,90 @@ func handleEstablished(conn *VTCPConn) {
 	case <-conn.closeC:
 		// transit to active close state?
 
-	case packet := <-conn.recvChan:
-		payloadSize := len(packet.Payload)
+	case segment := <-conn.recvChan:
+		segLen := len(segment.Payload)
 
-		if packet.TcpHeader.AckNum > conn.largestAck.Load() {
-			conn.largestAck.Store(packet.TcpHeader.AckNum)
-			conn.sendBuf.ack(packet.TcpHeader.AckNum)
+		if segment.TcpHeader.AckNum > conn.largestAck.Load() {
+			conn.largestAck.Store(segment.TcpHeader.AckNum)
+			conn.sendBuf.ack(segment.TcpHeader.AckNum)
 		}
 
-		if payloadSize > 0 {
-			if payloadSize > int(conn.recvBuf.FreeSpace()) {
-				logger.Printf("packet is outside the window, dropping the packet")
+		if segLen > 0 {
+			if conn.recvBuf.IsFull() {
+				logger.Printf("window size is 0. The segment is not acceptable. Start zero window probing...")
+
+				if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // but if RST bit is set, drop the packet and return
+					logger.Printf("a retransmitted non-accpetable packet. Dropping the packet...")
+					return
+				}
+				//TODO: zero window probing. Sends 1-byte any data back until advertised window size > 0
+				// seq = sendBuff.nxt; ack = recvBuff.nxt; flag = ack
+				logger.Printf("Ack is sent. Dropping the packet...")
 				return
 			}
 
-			if payloadSize > int(conn.recvBuf.NextExpectedByte()) {
-				// TODO : Out-of-order: queue as early arrival or should we just write to the buffer and let the buffer handle it
+			if segment.TcpHeader.SeqNum > conn.recvBuf.NextExpectedByte() {
+				// TODO : Out-of-order: queue in the early arrival
+				conn.earlyArrivalQ.Push(&Item{
+					value:    segment,
+					priority: segment.TcpHeader.SeqNum,
+				})
+				if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // send challenge ACK
+					logger.Printf("challenge ACK is sent. Dropping the packet...")
+					// seq = sendBuff.nxt; ack = recvBuff.nxt; flag = ack
+					return
+				}
+				return
 			}
 
-			// at this point, we received the next byte expected segment,
-			// we should deliver its next segment if it was a early arrival  --> check early arrival queue
-			// TODO : Out-of-order
-			n, err := conn.recvBuf.Write(packet.Payload)
+			// at this point, we received the next byte expected segment, and it's inside the window
+			if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst {
+				// reset the connection RFC9293 3.10.7
+				return
+			}
+
+			bytesWritten, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
+			logger.Printf("received %d bytes\n", bytesWritten)
+
+			// TODO : Out-of-order : we should write its next segment if it was a early arrival  --> check early arrival queue
+			for conn.earlyArrivalQ.Len() != 0 && conn.earlyArrivalQ[0].priority == conn.recvBuf.nxt {
+				topSeg := conn.earlyArrivalQ[0].value
+				//TODO: what if the segment is other types of packets?
+				n, err := conn.recvBuf.Write(topSeg.Payload)
+				if err != nil {
+					logger.Printf("failed to write to the read buffer error: %v. dropping the packet from early arrival...", err)
+					//should we drop the packet...?
+				}
+				bytesWritten += n
+				heap.Pop(&conn.earlyArrivalQ)
+				logger.Printf("wrote %d bytes from EA\n", n)
+			}
+
 			if err != nil {
 				logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
 				//should we drop the packet...?
 				return
 			}
-			logger.Printf("received %d bytes\n", n)
+			logger.Printf("wrote %d bytes in total\n", bytesWritten)
 
-			conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
+			conn.expectedSeqNum.Add(uint32(bytesWritten)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
 			newWindowSize := conn.recvBuf.FreeSpace()
 			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
 
 			// sends largest contiguous ack and left-over window size back
 			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 				conn.seqNum.Load(), conn.expectedSeqNum.Load(),
-				header.TCPFlagAck, make([]byte, 0), newWindowSize)
+				header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
 			err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 			if err != nil {
 				return
 			}
 		}
 
-		if packet.TcpHeader.Flags == header.TCPFlagFin|header.TCPFlagAck {
+		if segment.TcpHeader.Flags == header.TCPFlagFin|header.TCPFlagAck {
 			//send ack back
 			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-				packet.TcpHeader.AckNum, packet.TcpHeader.SeqNum+1,
+				segment.TcpHeader.AckNum, segment.TcpHeader.SeqNum+1,
 				header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY) // TODO: seqnum and acknum correct?
 
 			err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
@@ -200,6 +238,8 @@ func handleEstablished(conn *VTCPConn) {
 }
 
 func handleCloseWait(conn *VTCPConn) {
+	// segment := <-conn.recvChan
+	//check RST bit
 	conn.state = LAST_ACK
 }
 
@@ -222,6 +262,9 @@ func handleClosing(conn *VTCPConn) {
 }
 
 func handleTimeWait(conn *VTCPConn) {
+	// segment := <-conn.recvChan
+	//check RST bit
+	//check SYN bit
 	conn.state = CLOSED
 }
 

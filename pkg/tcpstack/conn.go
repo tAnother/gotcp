@@ -1,6 +1,7 @@
 package tcpstack
 
 import (
+	"container/heap"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
@@ -9,7 +10,7 @@ import (
 	"github.com/google/netstack/tcpip/header"
 )
 
-// Creates and binds the socket
+// Creates a socket
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
@@ -29,10 +30,12 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvBuf:          NewCircBuff(BUFFER_CAPACITY),
 		recvChan:         make(chan *proto.TCPPacket, 1),
 		closeC:           make(chan struct{}, 1),
+		earlyArrivalQ:    PriorityQueue{},
 	}
 	conn.seqNum.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
+	heap.Init(&conn.earlyArrivalQ)
 	return conn
 }
 
@@ -50,7 +53,7 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	}
 	conn.stateMu.RUnlock()
 	readBuff := conn.recvBuf
-	bytesRead, err := readBuff.Read(buf)
+	bytesRead, err := readBuff.Read(buf) //this will block if nothing to read in the buffer
 	if err != nil {
 		return 0, err
 	}
