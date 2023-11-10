@@ -9,83 +9,86 @@ const BUFFER_CAPACITY = 1<<16 - 1
 
 // We take this MIT licensed package as an example: https://github.com/smallnest/ringbuffer/blob/master/ring_buffer.go
 
-// ------|----------------|--------------------|
-//     head              tail               capacity
-// head < capacity; tail < capacity
+// ------|-----------------|--1byte--|--------------------|
+//     lbr+++++++++++++++++|--1byte--nxt               capacity
+// lbr can start at any point. The init value should be the init seq num
 
 type CircBuff struct {
 	buff     []byte
-	capacity uint16
-	head     uint16
-	tail     uint16
+	capacity uint32
+	lbr      uint32
+	nxt      uint32
 	isFull   bool
 	canRead  chan bool
 	lock     sync.Mutex
 }
 
-func NewCircBuff(capacity uint16) *CircBuff {
+func NewCircBuff(capacity uint32, start uint32) *CircBuff {
 	return &CircBuff{
 		buff:     make([]byte, capacity),
 		capacity: capacity,
+		lbr:      start,
+		nxt:      start + 1,
 		canRead:  make(chan bool, 1),
 	}
 }
 
 // Reads content on the circular buffer into the provided buffer with length len(buff)
-func (cb *CircBuff) Read(buf []byte) (uint16, error) {
+func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
 
-	// windowSize := cb.getWindowSize()
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
 	// 1. Base case: empty circular buff
-	if cb.head == cb.tail && !cb.isFull {
+	if ((cb.nxt-1)%cb.capacity == cb.lbr%cb.capacity) && !cb.isFull {
 		cb.lock.Unlock()
 		<-cb.canRead
 		cb.lock.Lock()
 	}
+	head := cb.lbr % cb.capacity
+	tail := (cb.nxt - 1) % cb.capacity
 
 	// 2. if head tail are in order
-	if cb.tail > cb.head {
-		bytesToRead := cb.tail - cb.head
-		if bytesToRead > uint16(len(buf)) {
-			bytesToRead = uint16(len(buf))
+	if tail > head {
+		bytesRead = tail - head
+		if bytesRead > uint32(len(buf)) {
+			bytesRead = uint32(len(buf))
 		}
-		copy(buf, cb.buff[cb.head:cb.head+bytesToRead])
-		cb.head = (cb.head + bytesToRead) % cb.capacity
-		return bytesToRead, nil
-	}
+		copy(buf, cb.buff[head:head+bytesRead])
+	} else { //3. if head and tail are in reversed order
+		bytesRead = cb.capacity - head + tail
+		if bytesRead > uint32(len(buf)) {
+			bytesRead = uint32(len(buf))
+		}
+		end := head + bytesRead
+		if end <= cb.capacity {
+			copy(buf, cb.buff[head:end])
+		} else {
+			copy(buf, cb.buff[head:cb.capacity])
+			copy(buf[cb.capacity-head:], cb.buff[:(end%cb.capacity)])
+		}
 
-	//3. if head and tail are in reversed order
-	bytesToRead := cb.capacity - cb.head + cb.tail
-	if bytesToRead > uint16(len(buf)) {
-		bytesToRead = uint16(len(buf))
 	}
-	end := cb.head + bytesToRead
-	if end <= cb.capacity {
-		copy(buf, cb.buff[cb.head:end])
-	} else {
-		copy(buf, cb.buff[cb.head:cb.capacity])
-		copy(buf[cb.capacity-cb.head:], cb.buff[:(end%cb.capacity)])
-	}
-
-	//4. update head and isFull
+	// 4. update lbr and isFull
 	cb.isFull = false
-	cb.head = end % cb.capacity
+	cb.lbr = cb.lbr + bytesRead
 	cb.canRead = make(chan bool, 1)
-	return bytesToRead, nil
+	return bytesRead, nil
 }
 
-func (cb *CircBuff) Write(buf []byte) (bytesWritten uint16, err error) {
+func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
 
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
+
+	head := cb.lbr % cb.capacity
+	tail := (cb.nxt - 1) % cb.capacity
 
 	//1. base case: circurlar buff is full, we cannot write
 	if cb.isFull {
@@ -93,42 +96,39 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint16, err error) {
 	}
 
 	//2. calculate free space
-	var avail uint16
-	if cb.tail >= cb.head {
-		avail = cb.capacity - cb.tail + cb.head
+	var avail uint32
+	if tail >= head {
+		avail = cb.capacity - tail + head
 	} else {
-		avail = cb.head - cb.tail
+		avail = head - tail
 	}
 
 	// 3. check if there's a write overflow
 	if len(buf) > int(avail) {
-		err = fmt.Errorf("write overflow")
+		logger.Print("write overflow")
 		buf = buf[:avail] //cut off the write buffer to available space
 	}
 
 	// 4. write to the circular buffer
-	bytesWritten = uint16(len(buf))
-	if cb.tail >= cb.head {
-		tailSpace := cb.capacity - cb.tail
-		if tailSpace >= (bytesWritten) { // if there's enough leftover space from tail ptr to the end
-			copy(cb.buff[cb.tail:], buf)
-			cb.tail += bytesWritten
+	bytesWritten = uint32(len(buf))
+	if tail >= head {
+		tailSpace := cb.capacity - tail
+		if tailSpace >= (bytesWritten) { // if there's enough leftover space from tail to the end
+			copy(cb.buff[tail:], buf)
 		} else { // if not, need to copy two slices
-			copy(cb.buff[cb.tail:], buf[:tailSpace])
-			headSpace := bytesWritten - tailSpace
+			copy(cb.buff[tail:], buf[:tailSpace])
 			copy(cb.buff[0:], buf[tailSpace:])
-			cb.tail = headSpace
 		}
 	} else {
-		copy(cb.buff[cb.tail:], buf)
-		cb.tail += bytesWritten
+		copy(cb.buff[tail:], buf)
 	}
+
+	//update nxt byte expected
+	cb.nxt += bytesWritten
 	cb.canRead <- true //signal the waiting read process
-	// 5. check if circ buff  is full
-	if cb.tail == cb.capacity {
-		cb.isFull = true
-	}
-	if cb.tail == cb.head {
+
+	// 5. check if circ buff is full
+	if (cb.nxt-1-cb.lbr)%cb.capacity == 0 {
 		cb.isFull = true
 	}
 	cb.canRead = make(chan bool, 1)
@@ -136,46 +136,51 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint16, err error) {
 }
 
 // Gets the available read bytes
-func (cb *CircBuff) WindowSize() uint16 {
+func (cb *CircBuff) WindowSize() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
-	if cb.head == cb.tail { //the buffer is full
+	head := cb.lbr % cb.capacity
+	tail := (cb.nxt - 1) % cb.capacity
+	if head == tail { //the buffer is full
 		if cb.isFull {
 			return cb.capacity
 		}
 		return 0
 	}
 
-	if cb.head > cb.tail {
-		return cb.capacity - cb.head + cb.tail
+	if head > tail {
+		return cb.capacity - head + tail
 	}
-	return cb.tail - cb.head
+	return tail - head
 }
 
 // Gets the available write space
-func (cb *CircBuff) FreeSpace() uint16 {
+func (cb *CircBuff) FreeSpace() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
-
-	if cb.head == cb.tail {
+	head := cb.lbr % cb.capacity
+	tail := (cb.nxt - 1) % cb.capacity
+	if head == tail {
 		if cb.isFull {
 			return 0
 		}
 		return cb.capacity
 	}
 
-	if cb.tail < cb.head {
-		return cb.head - cb.tail
+	if tail < head {
+		return head - tail
 	}
-	return cb.capacity - cb.tail + cb.head
+	return cb.capacity - tail + head
 }
 
 func (cb *CircBuff) IsEmpty() bool {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
-	return cb.head == cb.tail && !cb.isFull
+	head := cb.lbr % cb.capacity
+	tail := cb.nxt%cb.capacity - 1
+	return head == tail && !cb.isFull
 }
 
 func (cb *CircBuff) IsFull() bool {
@@ -189,38 +194,47 @@ func (cb *CircBuff) Bytes() []byte {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
-	if cb.head == cb.tail {
+	head := cb.lbr % cb.capacity
+	tail := (cb.nxt - 1) % cb.capacity
+
+	if head == tail {
 		if cb.isFull {
 			buf := make([]byte, cb.capacity)
-			copy(buf, cb.buff[cb.head:])
-			copy(buf[cb.capacity-cb.head:], cb.buff[:cb.tail])
+			copy(buf, cb.buff[head:])
+			copy(buf[cb.capacity-head:], cb.buff[:tail])
 			return buf
 		}
 		return nil
 	}
 
-	if cb.tail > cb.head {
-		buf := make([]byte, cb.tail-cb.head)
-		copy(buf, cb.buff[cb.head:cb.tail])
+	if tail > head {
+		buf := make([]byte, tail-head)
+		copy(buf, cb.buff[head:tail])
 		return buf
 	}
 
-	n := cb.capacity - cb.head + cb.tail
+	n := cb.capacity - head + tail
 	buf := make([]byte, n)
 
-	if cb.head+n < cb.capacity {
-		copy(buf, cb.buff[cb.head:cb.head+n])
+	if head+n < cb.capacity {
+		copy(buf, cb.buff[head:head+n])
 	} else {
-		headBytes := cb.capacity - cb.head
-		copy(buf, cb.buff[cb.head:cb.capacity])
+		headBytes := cb.capacity - head
+		copy(buf, cb.buff[head:cb.capacity])
 		tailBytes := n - headBytes
 		copy(buf[headBytes:], cb.buff[:tailBytes])
 	}
 	return buf
 }
 
-func (cb *CircBuff) NextExpectedByte() uint16 {
+func (cb *CircBuff) NextExpectedByte() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
-	return cb.tail + 1
+	return cb.nxt
+}
+
+func (cb *CircBuff) LastByteRead() uint32 {
+	cb.lock.Lock()
+	defer cb.lock.Unlock()
+	return cb.lbr
 }
