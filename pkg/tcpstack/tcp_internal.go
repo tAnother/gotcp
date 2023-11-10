@@ -13,7 +13,7 @@ func (t *TCPGlobalInfo) isPortInUse(port uint16) bool {
 	if _, inuse := t.listenerTable[port]; inuse {
 		return true
 	}
-	for endpoint, _ := range t.connTable {
+	for endpoint := range t.connTable {
 		if endpoint.LocalPort == port {
 			return true
 		}

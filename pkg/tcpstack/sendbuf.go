@@ -5,15 +5,17 @@ import (
 	"sync"
 )
 
+// TODO: tcp seq num wrap around
+
 type sendBuf struct {
 	buf []byte
 
-	capacity int
-	wnd      int
-	iss      int // init seq num
-	una      int // first byte unacked
-	nxt      int // next byte to send
-	nbw      int // next byte to write
+	capacity uint // buffer length
+	wnd      uint16
+	iss      uint32 // init seq num
+	una      uint32 // first byte unacked
+	nxt      uint32 // next byte to send
+	nbw      uint32 // next byte to write
 
 	hasUnsentC chan struct{}  // signaling there are things to be sent
 	freespaceC chan struct{}  // signaling some bytes are acked
@@ -22,11 +24,11 @@ type sendBuf struct {
 	mu *sync.Mutex
 }
 
-func newSendBuf(capacity, iss int) *sendBuf {
+func newSendBuf(capacity uint, iss uint32) *sendBuf {
 	return &sendBuf{
 		buf:        make([]byte, capacity),
 		capacity:   capacity,
-		wnd:        capacity,
+		wnd:        uint16(capacity),
 		iss:        iss,
 		una:        iss,
 		nxt:        iss,
@@ -38,14 +40,14 @@ func newSendBuf(capacity, iss int) *sendBuf {
 	}
 }
 
-func (b *sendBuf) index(num int) int {
-	return (num - b.iss) % b.capacity
+func (b *sendBuf) index(num uint32) int {
+	return int((num - b.iss)) % int(b.capacity)
 }
 
 // Free space left in the buffer.
 // The buffer should be locked on entry.
 func (b *sendBuf) freeSpace() int {
-	return b.una + b.wnd - b.nbw
+	return int(b.una) + int(b.wnd) - int(b.nbw)
 }
 
 // Write into the buffer.
@@ -68,14 +70,14 @@ func (b *sendBuf) write(data []byte) int {
 	nbwIdx := b.index(b.nbw)
 	unaIdx := b.index(b.una)
 
-	if nbwIdx < unaIdx || nbwIdx+len(data) <= b.capacity {
+	if nbwIdx < unaIdx || nbwIdx+len(data) <= int(b.capacity) {
 		copy(b.buf[nbwIdx:], data)
-		b.nbw += len(data)
+		b.nbw += uint32(len(data))
 	} else { // need to wrap around
-		firstHalf := b.capacity - nbwIdx
+		firstHalf := int(b.capacity) - int(nbwIdx)
 		copy(b.buf[nbwIdx:], data[:firstHalf])
 		copy(b.buf[0:], data[firstHalf:])
-		b.nbw = len(data) - firstHalf
+		b.nbw = uint32(len(data) - firstHalf)
 	}
 
 	b.hasUnsentC <- struct{}{}
@@ -85,7 +87,7 @@ func (b *sendBuf) write(data []byte) int {
 // Number of bytes to send.
 // The buffer should be locked on entry.
 func (b *sendBuf) numBytesUnsent() int {
-	return b.nbw - b.nxt
+	return int(b.nbw - b.nxt)
 }
 
 // Return an array of bytes to send, starting from seqNum to (at max) seqNum + numBytes.
@@ -116,11 +118,11 @@ func (b *sendBuf) send(seqNum uint32, numBytes int) []byte {
 	if nxtIdx < nbwIdx {
 		copy(ret, b.buf[nxtIdx:nxtIdx+numBytes])
 	} else {
-		firstHalf := b.wnd - nxtIdx
+		firstHalf := int(b.wnd) - nxtIdx
 		copy(ret[:firstHalf], b.buf[nxtIdx:])
 		copy(ret[firstHalf:], b.buf[:numBytes-firstHalf])
 	}
-	b.nxt += numBytes
+	b.nxt += uint32(numBytes)
 	b.sentQueue[seqNum] = numBytes
 
 	return ret
@@ -136,7 +138,7 @@ func (b *sendBuf) ack(seqNum uint32) error {
 		return fmt.Errorf("cannot find seq num %v in the sent queue", seqNum)
 	}
 
-	b.una = max(b.una, int(seqNum)+length)
+	b.una = max(b.una, seqNum+uint32(length))
 	b.freespaceC <- struct{}{}
 	if b.una == b.nxt {
 		clear(b.sentQueue)

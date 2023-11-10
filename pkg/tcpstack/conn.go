@@ -25,7 +25,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		expectedSeqNum:   &atomic.Uint32{},
 		largestAck:       &atomic.Uint32{},
 		windowSize:       &atomic.Int32{},
-		sendBuf:          newSendBuf(BUFFER_CAPACITY, int(iss)),
+		sendBuf:          newSendBuf(BUFFER_CAPACITY, iss),
 		recvBuf:          NewCircBuff(BUFFER_CAPACITY),
 		recvChan:         make(chan *proto.TCPPacket, 1),
 		closeC:           make(chan struct{}, 1),

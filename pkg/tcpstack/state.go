@@ -81,7 +81,7 @@ func handleSynRcvd(conn *VTCPConn) {
 
 		conn.largestAck.Store(packet.TcpHeader.AckNum)
 		conn.sendBuf.mu.Lock()
-		conn.sendBuf.wnd = int(packet.TcpHeader.WindowSize)
+		conn.sendBuf.wnd = packet.TcpHeader.WindowSize
 		conn.sendBuf.mu.Unlock()
 
 		conn.stateMu.Lock()
