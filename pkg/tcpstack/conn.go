@@ -1,6 +1,7 @@
 package tcpstack
 
 import (
+	"container/heap"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
@@ -29,10 +30,12 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvBuf:          NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
 		recvChan:         make(chan *proto.TCPPacket, 1),
 		closeC:           make(chan struct{}, 1),
+		earlyArrivalQ:    PriorityQueue{},
 	}
 	conn.seqNum.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
+	heap.Init(&conn.earlyArrivalQ)
 	return conn
 }
 
