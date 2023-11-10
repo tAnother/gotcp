@@ -11,61 +11,50 @@ import (
 
 // Creates and binds the socket
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
+	iss := generateStartSeqNum()
 	conn := &VTCPConn{
 		t:                t,
 		TCPEndpointID:    endpoint,
 		socketId:         atomic.AddInt32(&t.socketNum, 1),
 		state:            state,
-		stateMu:          sync.Mutex{},
+		stateMu:          sync.RWMutex{},
 		srtt:             &SRTT{}, //TODO
 		remoteInitSeqNum: remoteInitSeqNum,
-		localInitSeqNum:  generateStartSeqNum(),
+		localInitSeqNum:  iss,
 		seqNum:           &atomic.Uint32{},
 		expectedSeqNum:   &atomic.Uint32{},
 		largestAck:       &atomic.Uint32{},
-		windowSize:       &atomic.Uint32{},
-		sendBuf:          newSendBuf(BUFFER_CAPACITY),
+		windowSize:       &atomic.Int32{},
+		sendBuf:          newSendBuf(BUFFER_CAPACITY, int(iss)),
 		recvBuf:          NewCircBuff(BUFFER_CAPACITY),
 		recvChan:         make(chan *proto.TCPPacket, 1),
-		readWait:         make(chan struct{}, 1),
+		closeC:           make(chan struct{}, 1),
 	}
-	conn.seqNum.Store(conn.localInitSeqNum)
+	conn.seqNum.Store(iss)
+	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	return conn
 }
 
 // TODO: This should follow state machine CLOSE in the RFC
-func (*VTCPConn) VClose() error {
+func (conn *VTCPConn) VClose() error {
+	conn.closeC <- struct{}{}
 	return nil
 }
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
-	conn.stateMu.Lock()
+	conn.stateMu.RLock()
 	if conn.state == CLOSE_WAIT {
-		conn.stateMu.Unlock()
+		conn.stateMu.RUnlock()
 		return 0, io.EOF
 	}
-	conn.stateMu.Unlock()
-
-	if !conn.recvBuf.IsEmpty() {
-		bytesRead, err := conn.recvBuf.Read(buf)
-		if err != nil {
-			return 0, err
-		}
-		conn.windowSize.Add(uint32(bytesRead))
-		return int(bytesRead), nil
-	}
-
-	<-conn.readWait //block if there's no available data to read
-
+	conn.stateMu.RUnlock()
 	readBuff := conn.recvBuf
 	bytesRead, err := readBuff.Read(buf)
 	if err != nil {
-		conn.readWait = make(chan struct{}, 1) //should have a better way...
 		return 0, err
 	}
-	conn.readWait = make(chan struct{}, 1) //should have a better way...
-	conn.windowSize.Add(uint32(bytesRead))
+	conn.windowSize.Add(int32(bytesRead))
 	return int(bytesRead), nil
 }
 
@@ -77,20 +66,29 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 // Send out new data in the send buffer
+// TODO: should only run in established state?
 func (conn *VTCPConn) send() {
 	for {
-		if conn.state == FIN_WAIT_1 || conn.state == LAST_ACK {
-			return
-		}
-		bytesToSend := conn.sendBuf.send(conn.seqNum.Add(1), proto.MSS) // could block
+		bytesToSend := conn.sendBuf.send(conn.seqNum.Load(), proto.MSS) // could block
 		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.seqNum.Load(), conn.expectedSeqNum.Load(),
+			conn.seqNum.Load(), conn.expectedSeqNum.Load(), //this not correct...
 			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-
 		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 		if err != nil {
 			logger.Println(err)
 			return
 		}
+		// update seq number
+		conn.seqNum.Add(uint32(len(bytesToSend)))
+	}
+}
+
+func (conn *VTCPConn) run() {
+	conn.stateMu.RLock()
+	defer conn.stateMu.RUnlock()
+	for stateFunc := stateFuncMap[conn.state]; stateFunc != nil; stateFunc = stateFuncMap[conn.state] {
+		conn.stateMu.RUnlock()
+		stateFunc(conn)
+		conn.stateMu.RLock()
 	}
 }

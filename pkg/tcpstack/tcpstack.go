@@ -55,21 +55,21 @@ type VTCPConn struct { // represents a TCP socket
 	socketId int32
 
 	state   State
-	stateMu sync.Mutex
+	stateMu sync.RWMutex
 
 	srtt             *SRTT
-	localInitSeqNum  uint32         // unsafe - should stay unchanged once initialized
-	remoteInitSeqNum uint32         // unsafe - should stay unchanged once the connection is established
-	seqNum           *atomic.Uint32 // curr seqNum. increment atomically
-	largestAck       *atomic.Uint32 // the largest ACK we received
+	localInitSeqNum  uint32         // ISS (unsafe - should stay unchanged once initialized)
+	remoteInitSeqNum uint32         // IRS (unsafe - should stay unchanged once the connection is established)
+	seqNum           *atomic.Uint32 // SND.NXT - next seq num to use
+	largestAck       *atomic.Uint32 // SND.UNA - the largest ACK we received
 	expectedSeqNum   *atomic.Uint32 // the ACK num we should send to the other side
-	windowSize       *atomic.Uint32
+	windowSize       *atomic.Int32  // RCV.WND - range 0 ~ 65535
 
 	sendBuf *sendBuf
 	recvBuf *CircBuff
 
-	recvChan chan *proto.TCPPacket // for parsing tcp packets dispatched to this connection
-	readWait chan struct{}
+	recvChan chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
+	closeC   chan struct{}         // for closing // TODO: or also for other user input...?
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
@@ -97,7 +97,8 @@ func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
 }
 
 /************************************ TCP API ***********************************/
-// VListen creates a new listening socket bound to the specified port
+
+// (Passive OPEN in CLOSED state) VListen creates a new listening socket bound to the specified port
 func VListen(t *TCPGlobalInfo, port uint16) (*VTCPListener, error) {
 	// check the listener table to see if the port is already in use
 	if t.isPortInUse(port) {
@@ -110,6 +111,7 @@ func VListen(t *TCPGlobalInfo, port uint16) (*VTCPListener, error) {
 	return l, nil
 }
 
+// (Active OPEN in CLOSED state)
 func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error) {
 	// create a new endpoint ID with a random port number
 	endpoint := TCPEndpointID{
@@ -122,7 +124,7 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	conn := NewSocket(t, SYN_SENT, endpoint, 0)
 	t.bindSocket(endpoint, conn)
 
-	// create and send syn tcp packet
+	// create and send SYN tcp packet
 	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
 		conn.localInitSeqNum, 0,
 		header.TCPFlagSyn, make([]byte, 0), BUFFER_CAPACITY)
@@ -132,11 +134,11 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 		t.deleteSocket(endpoint)
 		return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
 	}
+	conn.seqNum.Add(1)
 
 	logger.Printf("Created a new socket with id %v\n", conn.socketId)
 
-	// go conn.handleRecvCall()
-	go conn.run()
+	go conn.run() // conn goes into SYN_SENT state
 	return conn, nil
 }
 

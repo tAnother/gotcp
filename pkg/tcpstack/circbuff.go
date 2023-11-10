@@ -19,6 +19,7 @@ type CircBuff struct {
 	head     uint16
 	tail     uint16
 	isFull   bool
+	canRead  chan bool
 	lock     sync.Mutex
 }
 
@@ -26,6 +27,7 @@ func NewCircBuff(capacity uint16) *CircBuff {
 	return &CircBuff{
 		buff:     make([]byte, capacity),
 		capacity: capacity,
+		canRead:  make(chan bool, 1),
 	}
 }
 
@@ -41,7 +43,9 @@ func (cb *CircBuff) Read(buf []byte) (uint16, error) {
 
 	// 1. Base case: empty circular buff
 	if cb.head == cb.tail && !cb.isFull {
-		return 0, fmt.Errorf("buffer is empty")
+		cb.lock.Unlock()
+		<-cb.canRead
+		cb.lock.Lock()
 	}
 
 	// 2. if head tail are in order
@@ -71,6 +75,7 @@ func (cb *CircBuff) Read(buf []byte) (uint16, error) {
 	//4. update head and isFull
 	cb.isFull = false
 	cb.head = end % cb.capacity
+	cb.canRead = make(chan bool, 1)
 	return bytesToRead, nil
 }
 
@@ -118,7 +123,7 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint16, err error) {
 		copy(cb.buff[cb.tail:], buf)
 		cb.tail += bytesWritten
 	}
-
+	cb.canRead <- true //signal the waiting read process
 	// 5. check if circ buff  is full
 	if cb.tail == cb.capacity {
 		cb.isFull = true
@@ -126,6 +131,7 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint16, err error) {
 	if cb.tail == cb.head {
 		cb.isFull = true
 	}
+	cb.canRead = make(chan bool, 1)
 	return bytesWritten, err
 }
 

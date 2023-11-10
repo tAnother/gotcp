@@ -22,6 +22,20 @@ const (
 	LAST_ACK
 )
 
+var stateString = []string{
+	"CLOSED",
+	"LISTEN",
+	"SYN_RECEIVED",
+	"SYN_SENT",
+	"ESTABLISHED",
+	"FIN_WAIT_1",
+	"FIN_WAIT_2",
+	"CLOSING",
+	"TIME_WAIT",
+	"CLOSE_WAIT",
+	"LAST_ACK",
+}
+
 var stateFuncMap = []func(*VTCPConn){
 	nil,
 	nil,
@@ -36,152 +50,153 @@ var stateFuncMap = []func(*VTCPConn){
 	handleLastAck,
 }
 
-func (conn *VTCPConn) run() {
-	go conn.send()
-
-	curr := stateFuncMap[conn.state]
-	for curr != nil {
-		curr(conn)
-		curr = stateFuncMap[conn.state]
-	}
-}
-
 func handleSynRcvd(conn *VTCPConn) {
-	packet := <-conn.recvChan
+	// wait for ACK, or close signal
+	select {
+	case <-conn.closeC:
+		// transit to active close state?
 
-	// if we have an only-ACK packet
-	if packet.TcpHeader.Flags != header.TCPFlagAck {
-		// TODO: should we delete the socket from the table????
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("error accpeting new conn. Flag of the back packet is not only-ACK but %v\n", packet.TcpHeader.Flags)
-		return
+	case packet := <-conn.recvChan:
+		// if we have an only-ACK packet
+		if packet.TcpHeader.Flags != header.TCPFlagAck {
+			// TODO: should we delete the socket from the table????
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("error accpeting new conn. Flag of the back packet is not only-ACK but %v\n", packet.TcpHeader.Flags)
+			return
+		}
+
+		// check if seqNum matches our expected SeqNum
+		if packet.TcpHeader.SeqNum != conn.expectedSeqNum.Load() {
+			// should we delete the socket from the table????
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("error accpeting new conn. Seq number received %v, expected %v\n", packet.TcpHeader.SeqNum, conn.expectedSeqNum)
+			return
+		}
+		if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
+			// should we delete the socket from the table????
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("error accpeting new conn. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
+			return
+		}
+
+		conn.largestAck.Store(packet.TcpHeader.AckNum)
+		conn.sendBuf.mu.Lock()
+		conn.sendBuf.wnd = int(packet.TcpHeader.WindowSize)
+		conn.sendBuf.mu.Unlock()
+
+		conn.stateMu.Lock()
+		conn.state = ESTABLISHED
+		conn.stateMu.Unlock()
+		go conn.send()
 	}
-
-	// check if seqNum matches our expected SeqNum
-	if packet.TcpHeader.SeqNum != conn.expectedSeqNum.Load() {
-		// should we delete the socket from the table????
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("error accpeting new conn. Seq number received %v, expected %v\n", packet.TcpHeader.SeqNum, conn.expectedSeqNum)
-		return
-	}
-	if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
-		// should we delete the socket from the table????
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("error accpeting new conn. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
-		return
-	}
-
-	conn.expectedSeqNum.Add(1)
-	conn.largestAck.Store(packet.TcpHeader.AckNum)
-
-	conn.state = ESTABLISHED
 }
 
 func handleSynSent(conn *VTCPConn) {
-	packet := <-conn.recvChan
+	// wait for SYN+ACK, or close signal
+	select {
+	case <-conn.closeC:
+		// transit to active close state?
+	case packet := <-conn.recvChan:
+		if packet.TcpHeader.Flags != header.TCPFlagSyn|header.TCPFlagAck {
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("Flag is not SYN+ACK but %v\n", packet.TcpHeader.Flags)
+			return
+		}
+		if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("error completing a handshake. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
+			return
+		}
 
-	if packet.TcpHeader.Flags != header.TCPFlagSyn|header.TCPFlagAck {
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("error completing a handshake. Flag is not SYN+ACK but %v\n", packet.TcpHeader.Flags)
-		return
+		conn.largestAck.Store(packet.TcpHeader.AckNum)
+		conn.remoteInitSeqNum = packet.TcpHeader.SeqNum
+		conn.expectedSeqNum.Store(packet.TcpHeader.SeqNum + 1)
+
+		// send ACK
+		newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+			conn.seqNum.Load(), packet.TcpHeader.SeqNum+1,
+			header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
+		err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+		if err != nil {
+			// should we delete the socket from the table????
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			return
+		}
+
+		conn.stateMu.Lock()
+		conn.state = ESTABLISHED
+		conn.stateMu.Unlock()
+		go conn.send()
 	}
-	if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("error completing a handshake. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
-		return
-	}
 
-	conn.largestAck.Store(packet.TcpHeader.AckNum)
-	conn.remoteInitSeqNum = packet.TcpHeader.SeqNum
-	conn.expectedSeqNum.Store(packet.TcpHeader.SeqNum + 1)
-
-	//should do something to the socket seq number fields here....
-	// send ack tcp packet
-	newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-		packet.TcpHeader.AckNum, packet.TcpHeader.SeqNum+1,
-		header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
-	conn.expectedSeqNum.Store(conn.remoteInitSeqNum + 1)
-	err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-	if err != nil {
-		// should we delete the socket from the table????
-		conn.t.deleteSocket(conn.TCPEndpointID)
-		return
-	}
-
-	conn.state = ESTABLISHED
 }
 
 func handleEstablished(conn *VTCPConn) {
-	packet := <-conn.recvChan
+	select {
+	case <-conn.closeC:
+		// transit to active close state?
 
-	if packet.TcpHeader.Flags == header.TCPFlagFin|header.TCPFlagAck {
-		//send ack back
-		newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			packet.TcpHeader.AckNum, packet.TcpHeader.SeqNum+1,
-			header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY) // TODO: seqnum and acknum correct?
+	case packet := <-conn.recvChan:
+		payloadSize := len(packet.Payload)
 
-		err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		if err != nil {
-			logger.Println(err)
+		if packet.TcpHeader.AckNum > conn.largestAck.Load() {
+			conn.largestAck.Store(packet.TcpHeader.AckNum)
+			conn.sendBuf.ack(packet.TcpHeader.AckNum)
+		}
+
+		if payloadSize > 0 {
+			if payloadSize > int(conn.recvBuf.FreeSpace()) {
+				logger.Printf("packet is outside the window, dropping the packet")
+				return
+			}
+
+			if payloadSize > int(conn.recvBuf.NextExpectedByte()) {
+				// TODO : Out-of-order: queue as early arrival or should we just write to the buffer and let the buffer handle it
+			}
+
+			// at this point, we received the next byte expected segment,
+			// we should deliver its next segment if it was a early arrival  --> check early arrival queue
+			// TODO : Out-of-order
+			n, err := conn.recvBuf.Write(packet.Payload)
+			if err != nil {
+				logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
+				//should we drop the packet...?
+				return
+			}
+			logger.Printf("received %d bytes\n", n)
+
+			conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
+			newWindowSize := conn.recvBuf.FreeSpace()
+			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
+
+			// sends largest contiguous ack and left-over window size back
+			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+				conn.seqNum.Load(), conn.expectedSeqNum.Load(),
+				header.TCPFlagAck, make([]byte, 0), newWindowSize)
+			err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			if err != nil {
+				return
+			}
+		}
+
+		if packet.TcpHeader.Flags == header.TCPFlagFin|header.TCPFlagAck {
+			//send ack back
+			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+				packet.TcpHeader.AckNum, packet.TcpHeader.SeqNum+1,
+				header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY) // TODO: seqnum and acknum correct?
+
+			err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			if err != nil {
+				logger.Println(err)
+				return
+			}
+			conn.seqNum.Add(1)
+			conn.stateMu.Lock()
+			conn.state = CLOSE_WAIT
+			conn.stateMu.Unlock()
 			return
 		}
-		conn.state = CLOSE_WAIT
-		return
 	}
-
-	if packet.TcpHeader.AckNum > conn.largestAck.Load() {
-		conn.largestAck.Store(packet.TcpHeader.AckNum)
-		conn.sendBuf.ack(packet.TcpHeader.AckNum - 1)
-	}
-	if packet.TcpHeader.SeqNum == conn.expectedSeqNum.Load() {
-		conn.expectedSeqNum.Add(1)
-	} else {
-		// ask for retransmission
-	}
-
-	payloadSize := len(packet.Payload)
-	if payloadSize > 0 {
-		if payloadSize > int(conn.recvBuf.FreeSpace()) {
-			logger.Printf("packet is outside the window, dropping the packet")
-			return
-		}
-
-		if payloadSize > int(conn.recvBuf.NextExpectedByte()) {
-			// TODO : Out-of-order: queue as early arrival or should we just write to the buffer and let the buffer handle it
-		}
-
-		// at this point, we received the next byte expected segment,
-		// we should deliver its next segment if it was a early arrival  --> check early arrival queue
-		// TODO : Out-of-order
-		n, err := conn.recvBuf.Write(packet.Payload)
-		if err != nil {
-			logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
-			//should we drop the packet...?
-			return
-		}
-		logger.Printf("received %d bytes", n)
-		if len(conn.readWait) == 1 { //should have a better way...
-			conn.readWait = make(chan struct{}, 1)
-		}
-		conn.readWait <- struct{}{} // now the read buffer has something to read...
-
-		// sends largest contiguous ack and left-over window size back
-		newAck := packet.TcpHeader.SeqNum + uint32(n) //TODO : Out-of-order should be updated for early arrival
-		newWindowSize := conn.windowSize.Load() - uint32(n)
-		conn.windowSize.Store(min(newWindowSize, BUFFER_CAPACITY))
-
-		newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			packet.TcpHeader.AckNum, newAck,
-			header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load())) // TODO: seqNum here seems a bit sussy
-		// atomic.StoreUint32(conn.expectedSeqNum, newAck) // same here
-		err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		if err != nil {
-			// logger.Printf("error sending ACK packet from %v to %v\n", netip.AddrPortFrom(conn.localAddr, conn.localPort), netip.AddrPortFrom(conn.remoteAddr, conn.remotePort))
-			return
-		}
-		conn.readWait = make(chan struct{}, 1)
-	}
-
 }
 
 func handleCloseWait(conn *VTCPConn) {

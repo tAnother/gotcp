@@ -23,7 +23,7 @@ func NewListenerSocket(t *TCPGlobalInfo, port uint16) *VTCPListener {
 	return listener
 }
 
-// Three-way handshake for receiver side happens here.
+// The LISTEN state. Three-way handshake for receiver side happens here.
 func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	pair := <-l.pendingSocketC
 	srcIP := pair.Addr
@@ -48,7 +48,6 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	l.t.bindSocket(endpoint, conn)
 
 	// 3. send back SYN+ACK packet
-	conn.expectedSeqNum.Store(conn.remoteInitSeqNum + 1)
 	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
 		conn.localInitSeqNum, conn.expectedSeqNum.Load(),
 		header.TCPFlagSyn|header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
@@ -61,8 +60,8 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 
 	logger.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
 
-	// go conn.handleRecvCall()
-	go conn.run()
+	conn.seqNum.Add(1)
+	go conn.run() // conn goes into SYN_RECEIVED state
 	return conn, nil
 }
 
