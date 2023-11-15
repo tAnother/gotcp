@@ -73,17 +73,15 @@ func handleSynRcvd(conn *VTCPConn) {
 			logger.Printf("error accpeting new conn. Seq number received %v, expected %v\n", packet.TcpHeader.SeqNum, conn.expectedSeqNum)
 			return
 		}
-		if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
+		if packet.TcpHeader.AckNum != conn.iss+1 {
 			// should we delete the socket from the table????
 			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error accpeting new conn. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
+			logger.Printf("error accpeting new conn. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.iss+1)
 			return
 		}
 
-		conn.largestAck.Store(packet.TcpHeader.AckNum)
-		conn.sendBuf.mu.Lock()
-		conn.sendBuf.wnd = packet.TcpHeader.WindowSize
-		conn.sendBuf.mu.Unlock()
+		conn.sndUna.Store(packet.TcpHeader.AckNum)
+		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
 
 		conn.stateMu.Lock()
 		conn.state = ESTABLISHED
@@ -103,19 +101,20 @@ func handleSynSent(conn *VTCPConn) {
 			logger.Printf("Flag is not SYN+ACK but %v\n", packet.TcpHeader.Flags)
 			return
 		}
-		if packet.TcpHeader.AckNum != conn.localInitSeqNum+1 {
+		if packet.TcpHeader.AckNum != conn.iss+1 {
 			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error completing a handshake. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.localInitSeqNum+1)
+			logger.Printf("error completing a handshake. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.iss+1)
 			return
 		}
 
-		conn.largestAck.Store(packet.TcpHeader.AckNum)
-		conn.remoteInitSeqNum = packet.TcpHeader.SeqNum
+		conn.sndUna.Store(packet.TcpHeader.AckNum)
+		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
+		conn.irs = packet.TcpHeader.SeqNum
 		conn.expectedSeqNum.Store(packet.TcpHeader.SeqNum + 1)
 
 		// send ACK
 		newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.seqNum.Load(), packet.TcpHeader.SeqNum+1,
+			conn.sndNxt.Load(), packet.TcpHeader.SeqNum+1,
 			header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
 		err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 		if err != nil {
@@ -140,9 +139,10 @@ func handleEstablished(conn *VTCPConn) {
 	case segment := <-conn.recvChan:
 		segLen := len(segment.Payload)
 
-		if segment.TcpHeader.AckNum > conn.largestAck.Load() {
-			conn.largestAck.Store(segment.TcpHeader.AckNum)
-			conn.sendBuf.ack(segment.TcpHeader.AckNum)
+		if segment.TcpHeader.AckNum > conn.sndUna.Load() {
+			conn.sndUna.Store(segment.TcpHeader.AckNum)
+			conn.ack(segment.TcpHeader.AckNum)
+			conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		}
 
 		if segLen > 0 {
@@ -209,7 +209,7 @@ func handleEstablished(conn *VTCPConn) {
 
 			// sends largest contiguous ack and left-over window size back
 			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-				conn.seqNum.Load(), conn.expectedSeqNum.Load(),
+				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 				header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
 			err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 			if err != nil {
@@ -228,7 +228,7 @@ func handleEstablished(conn *VTCPConn) {
 				logger.Println(err)
 				return
 			}
-			conn.seqNum.Add(1)
+			conn.sndNxt.Add(1)
 			conn.stateMu.Lock()
 			conn.state = CLOSE_WAIT
 			conn.stateMu.Unlock()

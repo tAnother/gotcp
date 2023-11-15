@@ -14,28 +14,31 @@ import (
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:                t,
-		TCPEndpointID:    endpoint,
-		socketId:         atomic.AddInt32(&t.socketNum, 1),
-		state:            state,
-		stateMu:          sync.RWMutex{},
-		srtt:             &SRTT{}, //TODO
-		remoteInitSeqNum: remoteInitSeqNum,
-		localInitSeqNum:  iss,
-		seqNum:           &atomic.Uint32{},
-		expectedSeqNum:   &atomic.Uint32{},
-		largestAck:       &atomic.Uint32{},
-		windowSize:       &atomic.Int32{},
-		sendBuf:          newSendBuf(BUFFER_CAPACITY, iss),
-		recvBuf:          NewCircBuff(BUFFER_CAPACITY),
-		recvChan:         make(chan *proto.TCPPacket, 1),
-		closeC:           make(chan struct{}, 1),
-		earlyArrivalQ:    PriorityQueue{},
+		t:              t,
+		TCPEndpointID:  endpoint,
+		socketId:       atomic.AddInt32(&t.socketNum, 1),
+		state:          state,
+		stateMu:        sync.RWMutex{},
+		srtt:           &SRTT{}, //TODO
+		irs:            remoteInitSeqNum,
+		iss:            iss,
+		sndNxt:         &atomic.Uint32{},
+		sndUna:         &atomic.Uint32{},
+		sndWnd:         &atomic.Int32{},
+		expectedSeqNum: &atomic.Uint32{},
+		windowSize:     &atomic.Int32{},
+		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
+		recvBuf:        NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
+		earlyArrivalQ:  PriorityQueue{},
+		inflightQ:      PriorityQueue{},
+		recvChan:       make(chan *proto.TCPPacket, 1),
+		closeC:         make(chan struct{}, 1),
 	}
-	conn.seqNum.Store(iss)
+	conn.sndNxt.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
+	heap.Init(&conn.inflightQ)
 	return conn
 }
 
@@ -62,29 +65,11 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 }
 
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
-	bytesWritten := conn.sendBuf.write(data) // could block
-	return bytesWritten, nil                 // TODO: in what circumstances can it err?
+	bytesWritten := conn.write(data) // could block
+	return bytesWritten, nil         // TODO: in what circumstances can it err?
 }
 
 /************************************ Private funcs ***********************************/
-
-// Send out new data in the send buffer
-// TODO: should only run in established state?
-func (conn *VTCPConn) send() {
-	for {
-		bytesToSend := conn.sendBuf.send(conn.seqNum.Load(), proto.MSS) // could block
-		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.seqNum.Load(), conn.expectedSeqNum.Load(), //this not correct...
-			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		// update seq number
-		conn.seqNum.Add(uint32(len(bytesToSend)))
-	}
-}
 
 func (conn *VTCPConn) run() {
 	conn.stateMu.RLock()
@@ -93,5 +78,24 @@ func (conn *VTCPConn) run() {
 		conn.stateMu.RUnlock()
 		stateFunc(conn)
 		conn.stateMu.RLock()
+	}
+}
+
+// Send out new data in the send buffer
+// TODO: should only run in established state?
+func (conn *VTCPConn) send() {
+	for {
+		// TODO: zero window probing
+		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS) // could block
+		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+			conn.sndNxt.Load(), conn.expectedSeqNum.Load(), //this not correct...
+			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
+		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		// update seq number
+		conn.sndNxt.Add(uint32(numBytes))
 	}
 }
