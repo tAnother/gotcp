@@ -49,10 +49,6 @@ func (conn *VTCPConn) numBytesNotSent() uint32 {
 
 // Max number to send to the receiver
 func (conn *VTCPConn) usableSendWindow() uint32 {
-	logger.Println("snduna: ", conn.sndUna.Load())
-	logger.Println("sndWnd: ", conn.sndWnd.Load())
-	logger.Println("sndNxt: ", conn.sndNxt.Load())
-
 	return conn.sndUna.Load() + uint32(conn.sndWnd.Load()) - conn.sndNxt.Load()
 }
 
@@ -128,11 +124,11 @@ func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	}
 	b.hasUnsentC = make(chan struct{}, 1)
 
-	logger.Println("numbytes: ", numBytes)
-	logger.Println("numBytesNotSent: ", uint(conn.numBytesNotSent()))
-	logger.Println("usableSendWindow: ", uint(conn.usableSendWindow()))
+	// logger.Println("numbytes: ", numBytes)
+	// logger.Println("numBytesNotSent: ", uint(conn.numBytesNotSent()))
+	// logger.Println("usableSendWindow: ", uint(conn.usableSendWindow()))
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
-	logger.Println("min-numbytes: ", numBytes)
+	// logger.Println("min-numbytes: ", numBytes)
 
 	ret := make([]byte, numBytes)
 

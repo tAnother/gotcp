@@ -58,7 +58,7 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 		return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
 	}
 
-	logger.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+	fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
 
 	conn.sndNxt.Add(1)
 	go conn.run() // conn goes into SYN_RECEIVED state

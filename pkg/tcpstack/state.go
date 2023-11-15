@@ -1,7 +1,6 @@
 package tcpstack
 
 import (
-	"container/heap"
 	"iptcp-nora-yu/pkg/proto"
 
 	"github.com/google/netstack/tcpip/header"
@@ -159,12 +158,8 @@ func handleEstablished(conn *VTCPConn) {
 				return
 			}
 
-			if segment.TcpHeader.SeqNum > conn.recvBuf.NextExpectedByte() {
-				// TODO : Out-of-order: queue in the early arrival
-				conn.earlyArrivalQ.Push(&Item{
-					value:    segment,
-					priority: segment.TcpHeader.SeqNum,
-				})
+			if segment.TcpHeader.SeqNum > conn.expectedSeqNum.Load() { // TODO : maybe needs to change the range of head tail of buff
+				// TODO : Out-of-order: queue as early arrival or should we just write to the buffer and let the buffer handle it
 				if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // send challenge ACK
 					logger.Printf("challenge ACK is sent. Dropping the packet...")
 					// seq = sendBuff.nxt; ack = recvBuff.nxt; flag = ack
@@ -179,31 +174,16 @@ func handleEstablished(conn *VTCPConn) {
 				return
 			}
 
-			bytesWritten, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
-			logger.Printf("received %d bytes\n", bytesWritten)
-
-			// TODO : Out-of-order : we should write its next segment if it was a early arrival  --> check early arrival queue
-			for conn.earlyArrivalQ.Len() != 0 && conn.earlyArrivalQ[0].priority == conn.recvBuf.nxt {
-				topSeg := conn.earlyArrivalQ[0].value
-				//TODO: what if the segment is other types of packets?
-				n, err := conn.recvBuf.Write(topSeg.Payload)
-				if err != nil {
-					logger.Printf("failed to write to the read buffer error: %v. dropping the packet from early arrival...", err)
-					//should we drop the packet...?
-				}
-				bytesWritten += n
-				heap.Pop(&conn.earlyArrivalQ)
-				logger.Printf("wrote %d bytes from EA\n", n)
-			}
-
+			// TODO : Out-of-order : we should deliver its next segment if it was a early arrival  --> check early arrival queue
+			n, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
 			if err != nil {
 				logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
 				//should we drop the packet...?
 				return
 			}
-			logger.Printf("wrote %d bytes in total\n", bytesWritten)
+			logger.Printf("received %d bytes\n", n)
 
-			conn.expectedSeqNum.Add(uint32(bytesWritten)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
+			conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
 			newWindowSize := conn.recvBuf.FreeSpace()
 			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
 

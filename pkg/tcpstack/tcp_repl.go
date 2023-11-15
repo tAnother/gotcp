@@ -221,7 +221,6 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 					io.WriteString(config.Writer, fmt.Sprintf("error sending file: %v\n", err))
 					return
 				}
-				logger.Printf("wrote %d bytes into send buf\n", w)
 				bytesWritten += w
 			}
 			io.WriteString(config.Writer, fmt.Sprintf("Wrote %v bytes\n", bytesWritten))

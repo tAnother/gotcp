@@ -111,7 +111,7 @@ func VListen(t *TCPGlobalInfo, port uint16) (*VTCPListener, error) {
 	// create a new listener socket
 	l := NewListenerSocket(t, port)
 	t.bindListener(port, l)
-	logger.Printf("Created a listener socket with id %v\n", l.socketId)
+	fmt.Printf("Created a listener socket with id %v\n", l.socketId)
 	return l, nil
 }
 
@@ -143,7 +143,7 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	}
 	conn.sndNxt.Add(1)
 
-	logger.Printf("Created a new socket with id %v\n", conn.socketId)
+	fmt.Printf("Created a new socket with id %v\n", conn.socketId)
 
 	go conn.run() // conn goes into SYN_SENT state
 	return conn, nil

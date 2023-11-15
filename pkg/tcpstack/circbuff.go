@@ -131,7 +131,7 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error) {
 	if (cb.nxt-1-cb.lbr)%cb.capacity == 0 {
 		cb.isFull = true
 	}
-	cb.canRead = make(chan bool, 1)
+	// cb.canRead = make(chan bool, 1)
 	return bytesWritten, err
 }
 
