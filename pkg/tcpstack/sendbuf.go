@@ -38,18 +38,21 @@ func (b *sendBuf) index(num uint32) uint {
 // Space left in the buffer.
 // The buffer should be locked on entry.
 func (conn *VTCPConn) sendBufFreeSpace() uint {
-	return conn.sendBuf.capacity - uint(conn.sendBuf.lbw) - uint(conn.sndUna.Load())
+	return conn.sendBuf.capacity - uint(conn.sendBuf.lbw-conn.sndUna.Load())
 }
 
-// Number of send-able bytes
+// Number of bytes in the buffer that's not yet sent to the receiver.
 // The buffer should be locked on entry.
 func (conn *VTCPConn) numBytesNotSent() uint32 {
 	return conn.sendBuf.lbw - conn.sndNxt.Load()
 }
 
-// Max number to send to the receiver
+// Current max length to send to the receiver
 func (conn *VTCPConn) usableSendWindow() uint32 {
-	return conn.sndUna.Load() + uint32(conn.sndWnd.Load()) - conn.sndNxt.Load()
+	if conn.sndUna.Load()+uint32(conn.sndWnd.Load()) > conn.sndNxt.Load() {
+		return conn.sndUna.Load() + uint32(conn.sndWnd.Load()) - conn.sndNxt.Load()
+	}
+	return 0
 }
 
 // Write into the buffer.
@@ -74,19 +77,19 @@ func (conn *VTCPConn) write(data []byte) int {
 
 	if lbwIdx < unaIdx || lbwIdx+uint(len(data)) <= b.capacity {
 		copy(b.buf[lbwIdx:], data)
-		b.lbw += uint32(len(data))
 	} else { // need to wrap around
 		firstHalf := int(b.capacity) - int(lbwIdx)
 		copy(b.buf[lbwIdx:], data[:firstHalf])
 		copy(b.buf[0:], data[firstHalf:])
-		b.lbw = uint32(len(data) - firstHalf)
 	}
 
+	b.lbw += uint32(len(data))
 	b.hasUnsentC <- struct{}{}
 	return len(data)
 }
 
 // Return the segment corresponding to seqNum. Use for retransmission
+/*
 func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 	if length == 0 {
 		return nil
@@ -106,6 +109,7 @@ func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 	copy(ret[b.capacity-start:], b.buf[:end])
 	return ret
 }
+*/
 
 // Return an array of new bytes to send and its length (at max numBytes)
 // If there are no bytes to send, block until there are.
@@ -124,35 +128,27 @@ func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	}
 	b.hasUnsentC = make(chan struct{}, 1)
 
-	// logger.Println("numbytes: ", numBytes)
-	// logger.Println("numBytesNotSent: ", uint(conn.numBytesNotSent()))
-	// logger.Println("usableSendWindow: ", uint(conn.usableSendWindow()))
+	// TODO: temp support for zwp? not sure if zwp is gonna use this func
+	// if conn.usableSendWindow() == 0 {
+	// 	// start zero window probing
+	// 	numBytes = 1
+	// } else {
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
-	// logger.Println("min-numbytes: ", numBytes)
+	if numBytes == 0 {
+		return 0, nil
+	}
+	// }
 
 	ret := make([]byte, numBytes)
-
 	nxtIdx := b.index(conn.sndNxt.Load())
 	lbwIdx := b.index(b.lbw)
 
 	if nxtIdx < lbwIdx {
 		copy(ret, b.buf[nxtIdx:nxtIdx+numBytes])
 	} else {
-		firstHalf := uint(b.lbw) - nxtIdx
+		firstHalf := b.capacity - nxtIdx
 		copy(ret[:firstHalf], b.buf[nxtIdx:])
 		copy(ret[firstHalf:], b.buf[:numBytes-firstHalf])
 	}
-
 	return numBytes, ret
-}
-
-// Mark seqNum as acked
-func (conn *VTCPConn) ack(seqNum uint32) error {
-	if conn.sndUna.Load() < seqNum {
-		conn.sndUna.Store(seqNum)
-		conn.sendBuf.mu.Lock()
-		conn.sendBuf.freespaceC <- struct{}{}
-		conn.sendBuf.mu.Unlock()
-	}
-	return nil
 }

@@ -19,7 +19,7 @@ type CircBuff struct {
 	lbr      uint32
 	nxt      uint32
 	isFull   bool
-	canRead  chan bool
+	canRead  chan struct{}
 	lock     sync.Mutex
 }
 
@@ -29,7 +29,7 @@ func NewCircBuff(capacity uint32, start uint32) *CircBuff {
 		capacity: capacity,
 		lbr:      start,
 		nxt:      start + 1,
-		canRead:  make(chan bool, 1),
+		canRead:  make(chan struct{}, capacity),
 	}
 }
 
@@ -75,7 +75,7 @@ func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) {
 	// 4. update lbr and isFull
 	cb.isFull = false
 	cb.lbr = cb.lbr + bytesRead
-	cb.canRead = make(chan bool, 1)
+	cb.canRead = make(chan struct{}, cb.capacity)
 	return bytesRead, nil
 }
 
@@ -125,13 +125,12 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error) {
 
 	//update nxt byte expected
 	cb.nxt += bytesWritten
-	cb.canRead <- true //signal the waiting read process
+	cb.canRead <- struct{}{} //signal the waiting read process
 
 	// 5. check if circ buff is full
 	if (cb.nxt-1-cb.lbr)%cb.capacity == 0 {
 		cb.isFull = true
 	}
-	// cb.canRead = make(chan bool, 1)
 	return bytesWritten, err
 }
 

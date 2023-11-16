@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	deque "github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -30,7 +31,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
 		recvBuf:        NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
 		earlyArrivalQ:  PriorityQueue{},
-		inflightQ:      PriorityQueue{},
+		inflightQ:      deque.New[*proto.TCPPacket](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		closeC:         make(chan struct{}, 1),
 	}
@@ -38,7 +39,6 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
-	heap.Init(&conn.inflightQ)
 	return conn
 }
 
@@ -87,6 +87,9 @@ func (conn *VTCPConn) send() {
 	for {
 		// TODO: zero window probing
 		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS) // could block
+		if numBytes == 0 {                                    // nothing to send
+			continue
+		}
 		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 			conn.sndNxt.Load(), conn.expectedSeqNum.Load(), //this not correct...
 			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
@@ -95,7 +98,30 @@ func (conn *VTCPConn) send() {
 			logger.Println(err)
 			return
 		}
+		// conn.inflightQ.PushBack(packet)
 		// update seq number
 		conn.sndNxt.Add(uint32(numBytes))
+	}
+}
+
+// Mark sequences up to ackNum as acked
+func (conn *VTCPConn) ack(ackNum uint32) error {
+	if conn.sndUna.Load() < ackNum {
+		conn.sndUna.Store(ackNum)
+		conn.sendBuf.mu.Lock()
+		conn.sendBuf.freespaceC <- struct{}{}
+		conn.sendBuf.mu.Unlock()
+		// conn.ackInflight(ackNum)
+	}
+	return nil
+}
+
+func (conn *VTCPConn) ackInflight(ackNum uint32) {
+	for conn.inflightQ.Len() > 0 {
+		packet := conn.inflightQ.Front()
+		if packet.TcpHeader.SeqNum >= ackNum { // TODO: this doesn't account for the situation when only a portion of the packet was acked
+			return
+		}
+		conn.inflightQ.PopFront()
 	}
 }

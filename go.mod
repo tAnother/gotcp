@@ -7,7 +7,9 @@ require (
 	github.com/pkg/errors v0.9.1
 )
 
+require github.com/gammazero/deque v0.2.1 // indirect
+
 require (
-	github.com/brown-csci1680/iptcp-headers v0.0.0-20230924161227-ebbbbba41fe3 // indirect
+	github.com/brown-csci1680/iptcp-headers v0.0.0-20230924161227-ebbbbba41fe3
 	github.com/google/btree v1.1.2 // indirect
 )

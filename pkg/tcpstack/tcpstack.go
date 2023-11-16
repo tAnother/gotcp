@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	deque "github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -70,7 +71,7 @@ type VTCPConn struct { // represents a TCP socket
 	sendBuf       *sendBuf
 	recvBuf       *CircBuff
 	earlyArrivalQ PriorityQueue
-	inflightQ     PriorityQueue
+	inflightQ     *deque.Deque[*proto.TCPPacket]
 
 	recvChan chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	closeC   chan struct{}         // for closing // TODO: or also for other user input...?
