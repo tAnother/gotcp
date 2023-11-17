@@ -92,8 +92,8 @@ func (conn *VTCPConn) write(data []byte) int {
 	return int(numBytes)
 }
 
-// Return the segment corresponding to seqNum. Use for retransmission
-func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
+// Return the segment corresponding to seqNum. For retransmission
+func (b *sendBuf) getBytesFromSendBuf(seqNum uint32, length int) []byte {
 	if length == 0 {
 		return nil
 	}
@@ -115,7 +115,7 @@ func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 
 // Return an array of new bytes to send and its length (at max numBytes)
 // If there are no bytes to send, block until there are.
-func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
+func (conn *VTCPConn) bytesNotSent(numBytes uint, forProbe bool) (uint, []byte) {
 	b := conn.sendBuf
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -127,16 +127,20 @@ func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	}
 	b.hasUnsentC = make(chan struct{}, b.capacity)
 
-	// TODO: temp support for zwp? not sure if zwp is gonna use this func
-	// if conn.usableSendWindow() == 0 {
-	// 	// start zero window probing
-	// 	numBytes = 1
-	// } else {
+	if forProbe {
+		nxt := b.buf[b.index(conn.sndNxt.Load())]
+		return 1, []byte{nxt}
+	}
+
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
 	if numBytes == 0 {
+		// TODO: this is mainly used when usable send window = 0, where we need to stop sending new data
+		// while keep retransmitting buf[SND.UNA, SND.UNA + SND.WND)
+		// it can cause spin wait especially when SND.NXT & SND.WND both exceed SND.UNA too much
+		// (probably when an early segment gets dropped?)
+		// but blocking until usable send window becomes >0 would require observing SND.UNA & SND.WND
 		return 0, nil
 	}
-	// }
 
 	ret := make([]byte, numBytes)
 	nxtIdx := b.index(conn.sndNxt.Load())

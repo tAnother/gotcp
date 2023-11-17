@@ -7,6 +7,7 @@ import (
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	deque "github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
@@ -71,7 +72,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		conn.stateMu.RLock()
 		if conn.state == FIN_WAIT_1 || conn.state == FIN_WAIT_2 || conn.state == CLOSING || conn.state == TIME_WAIT {
 			conn.stateMu.RUnlock()
-			return bytesWritten, errors.New("trying to write to a non-established connection")
+			return bytesWritten, errors.New("trying to write to a closing connection")
 		}
 		conn.stateMu.RUnlock()
 		w := conn.write(data[bytesWritten:])
@@ -96,8 +97,10 @@ func (conn *VTCPConn) run() {
 // TODO: should only run in established state?
 func (conn *VTCPConn) send() {
 	for {
-		// TODO: zero window probing
-		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS) // could block
+		if conn.sndWnd.Load() == 0 {
+			conn.zeroWindowProbe()
+		}
+		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS, false) // could block
 		if numBytes == 0 {
 			continue
 		}
@@ -134,5 +137,26 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 			return
 		}
 		conn.inflightQ.PopFront()
+	}
+}
+
+func (conn *VTCPConn) zeroWindowProbe() {
+	_, bytesToSend := conn.bytesNotSent(1, true)
+	packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+		conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
+		header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
+
+	tk := time.NewTicker(1 * time.Second)
+	for conn.sndWnd.Load() == 0 {
+		<-tk.C
+		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+		logger.Println("Sent zwp packet with byte: ", bytesToSend)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+	}
+	if conn.sndUna.Load() > conn.sndNxt.Load() {
+		conn.sndNxt.Add(1) // increment only after this one byte is acked - UNSAFE? what if nxt wraps around?
 	}
 }

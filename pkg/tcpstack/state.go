@@ -146,16 +146,22 @@ func handleEstablished(conn *VTCPConn) {
 
 		if segLen > 0 {
 			if conn.recvBuf.IsFull() {
-				logger.Printf("window size is 0. The segment is not acceptable. Start zero window probing...")
-
-				if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // but if RST bit is set, drop the packet and return
-					logger.Printf("a retransmitted non-accpetable packet. Dropping the packet...")
+				logger.Println("window size is 0. sending ack...")
+				newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+					conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
+					header.TCPFlagAck, []byte{}, 0)
+				err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+				if err != nil {
+					logger.Println(err)
 					return
 				}
-				//TODO: zero window probing. Sends 1-byte any data back until advertised window size > 0
-				// seq = sendBuff.nxt; ack = recvBuff.nxt; flag = ack
-				logger.Printf("Ack is sent. Dropping the packet...")
+				logger.Println("Ack is sent. Dropping the packet...")
 				return
+
+				// if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // but if RST bit is set, drop the packet and return
+				// 	logger.Printf("a retransmitted non-accpetable packet. Dropping the packet...")
+				// 	return
+				// }
 			}
 
 			if segment.TcpHeader.SeqNum > conn.expectedSeqNum.Load() { // TODO : maybe needs to change the range of head tail of buff
@@ -169,10 +175,10 @@ func handleEstablished(conn *VTCPConn) {
 			}
 
 			// at this point, we received the next byte expected segment, and it's inside the window
-			if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst {
-				// reset the connection RFC9293 3.10.7
-				return
-			}
+			// if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst {
+			// 	// reset the connection RFC9293 3.10.7
+			// 	return
+			// }
 
 			// TODO : Out-of-order : we should deliver its next segment if it was a early arrival  --> check early arrival queue
 			n, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
