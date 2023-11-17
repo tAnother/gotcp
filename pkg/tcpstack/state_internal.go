@@ -14,7 +14,6 @@ import (
 func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error) {
 
 	if !isValidSeg(segment, conn) {
-		// send ack <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
 		err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
 			return make([]byte, 0), 0, err
@@ -100,9 +99,8 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 }
 
 // Advance recvBuf.NXT over FIN, and sends back ACK packet
-// This is not called in CLOSED, LISTEN, SYN-SENT
 func handleFin(segment *proto.TCPPacket, conn *VTCPConn) error {
-	conn.recvBuf.Fin(segment.TcpHeader.SeqNum)
+	conn.recvBuf.AdvanceNxt(segment.TcpHeader.SeqNum, true)
 	conn.expectedSeqNum.Add(1)
 	finPacket := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 	err := send(conn.t, finPacket, conn.LocalAddr, conn.RemoteAddr)
@@ -132,6 +130,7 @@ func timeWaitTimer(conn *VTCPConn) {
 			conn.stateMu.Lock()
 			conn.state = CLOSED
 			conn.stateMu.Unlock()
+			fmt.Printf("Socket %v closed", conn.socketId)
 			conn.t.deleteSocket(TCPEndpointID{LocalAddr: conn.LocalAddr, RemoteAddr: conn.RemoteAddr, LocalPort: conn.LocalPort, RemotePort: conn.RemotePort})
 			return
 		case <-conn.timeWaitReset:
@@ -165,7 +164,6 @@ func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
 	cond1 := segSeq >= rcvNxt && segSeq < rcvNxt+uint32(rcvWnd)
 	cond2 := segSeq+uint32(segLen)-1 >= rcvNxt && segSeq+uint32(segLen)-1 < rcvNxt+uint32(rcvWnd)
 	return cond1 || cond2
-
 }
 
 // TODO : try to refactor this

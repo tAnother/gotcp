@@ -3,6 +3,7 @@ package tcpstack
 import (
 	"container/heap"
 	"errors"
+	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
@@ -44,9 +45,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 	return conn
 }
 
-// TODO: This should follow state machine CLOSE in the RFC
 func (conn *VTCPConn) VClose() error {
-	// conn.closeC <- struct{}{}
 	return conn.activeClose()
 }
 
@@ -55,6 +54,10 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	if conn.state == CLOSE_WAIT {
 		conn.stateMu.RUnlock()
 		return 0, io.EOF
+	}
+	if conn.state == FIN_WAIT_2 || conn.state == FIN_WAIT_1 || conn.state == CLOSING {
+		conn.stateMu.RUnlock()
+		return 0, fmt.Errorf("operation not permitted")
 	}
 	conn.stateMu.RUnlock()
 	readBuff := conn.recvBuf

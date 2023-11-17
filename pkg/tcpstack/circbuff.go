@@ -244,9 +244,15 @@ func (cb *CircBuff) LastByteRead() uint32 {
 	return cb.lbr
 }
 
-func (cb *CircBuff) Fin(seq uint32) {
+func (cb *CircBuff) AdvanceNxt(seq uint32, isFin bool) {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
-	cb.finRecvd = true
+	cb.finRecvd = isFin
 	cb.nxt = seq + 1
+}
+
+func (cb *CircBuff) SetLBR(seq uint32) {
+	cb.lock.Lock()
+	defer cb.lock.Unlock()
+	cb.lbr = seq
 }
