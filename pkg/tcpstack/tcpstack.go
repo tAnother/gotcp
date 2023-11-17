@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	deque "github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -57,19 +58,24 @@ type VTCPConn struct { // represents a TCP socket
 	state   State
 	stateMu sync.RWMutex
 
-	srtt             *SRTT
-	localInitSeqNum  uint32         // ISS (unsafe - should stay unchanged once initialized)
-	remoteInitSeqNum uint32         // IRS (unsafe - should stay unchanged once the connection is established)
-	seqNum           *atomic.Uint32 // SND.NXT - next seq num to use
-	largestAck       *atomic.Uint32 // SND.UNA - the largest ACK we received
-	expectedSeqNum   *atomic.Uint32 // the ACK num we should send to the other side
-	windowSize       *atomic.Int32  // RCV.WND - range 0 ~ 65535
+	srtt *SRTT
 
-	sendBuf *sendBuf
-	recvBuf *CircBuff
+	iss            uint32         // initial send sequence number (unsafe - should stay unchanged once initialized)
+	irs            uint32         // initial receive sequence number (unsafe - should stay unchanged once connection established)
+	sndNxt         *atomic.Uint32 // SND.NXT - next seq num to use for sending
+	sndUna         *atomic.Uint32 // SND.UNA - the largest ACK we received
+	sndWnd         *atomic.Int32  // SND.WND - the other side's window size
+	expectedSeqNum *atomic.Uint32 // RCV.NXT- the ACK num we should send to the other side
+	windowSize     *atomic.Int32  // RCV.WND - range 0 ~ 65535
 
-	recvChan chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
-	closeC   chan struct{}         // for closing // TODO: or also for other user input...?
+	sendBuf       *sendBuf
+	recvBuf       *CircBuff
+	earlyArrivalQ PriorityQueue
+	inflightQ     *deque.Deque[*proto.TCPPacket]
+
+	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
+	timeWaitReset chan bool
+	closeC        chan struct{} // for closing // TODO: or also for other user input...?
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
@@ -107,7 +113,7 @@ func VListen(t *TCPGlobalInfo, port uint16) (*VTCPListener, error) {
 	// create a new listener socket
 	l := NewListenerSocket(t, port)
 	t.bindListener(port, l)
-	logger.Printf("Created a listener socket with id %v\n", l.socketId)
+	fmt.Printf("Created a listener socket with id %v\n", l.socketId)
 	return l, nil
 }
 
@@ -120,13 +126,16 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 		RemoteAddr: addr,
 		RemotePort: port,
 	}
+	if t.socketExists(endpoint) {
+		return nil, fmt.Errorf("socket already exsists with local vip %v port %v and remote vip %v port %v", endpoint.LocalAddr, endpoint.LocalPort, endpoint.RemoteAddr, endpoint.RemotePort)
+	}
 	// create the socket
 	conn := NewSocket(t, SYN_SENT, endpoint, 0)
 	t.bindSocket(endpoint, conn)
 
 	// create and send SYN tcp packet
 	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
-		conn.localInitSeqNum, 0,
+		conn.iss, 0,
 		header.TCPFlagSyn, make([]byte, 0), BUFFER_CAPACITY)
 
 	err := send(t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
@@ -134,9 +143,9 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 		t.deleteSocket(endpoint)
 		return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
 	}
-	conn.seqNum.Add(1)
+	conn.sndNxt.Add(1)
 
-	logger.Printf("Created a new socket with id %v\n", conn.socketId)
+	fmt.Printf("Created a new socket with id %v\n", conn.socketId)
 
 	go conn.run() // conn goes into SYN_SENT state
 	return conn, nil
@@ -149,8 +158,8 @@ func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
 		// unmarshal and validate the packet
 		tcpPacket := new(proto.TCPPacket)
 		tcpPacket.Unmarshal(ipPacket.Payload[:ipPacket.Header.TotalLen-ipPacket.Header.Len])
-		logger.Printf("\nReceived TCP packet from %s\tIP Header:  %v\tTCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-			ipPacket.Header.Src, ipPacket.Header, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
+		// logger.Printf("\nReceived TCP packet from %s\tIP Header:  %v\tTCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
+		// 	ipPacket.Header.Src, ipPacket.Header, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
 
 		if !proto.ValidTCPChecksum(tcpPacket, ipPacket.Header.Src, ipPacket.Header.Dst) {
 			logger.Printf("packet dropped because checksum validation failed\n")

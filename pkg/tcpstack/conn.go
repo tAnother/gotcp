@@ -1,11 +1,14 @@
 package tcpstack
 
 import (
+	"container/heap"
+	"errors"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
 	"sync/atomic"
 
+	deque "github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -13,33 +16,38 @@ import (
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:                t,
-		TCPEndpointID:    endpoint,
-		socketId:         atomic.AddInt32(&t.socketNum, 1),
-		state:            state,
-		stateMu:          sync.RWMutex{},
-		srtt:             &SRTT{}, //TODO
-		remoteInitSeqNum: remoteInitSeqNum,
-		localInitSeqNum:  iss,
-		seqNum:           &atomic.Uint32{},
-		expectedSeqNum:   &atomic.Uint32{},
-		largestAck:       &atomic.Uint32{},
-		windowSize:       &atomic.Int32{},
-		sendBuf:          newSendBuf(BUFFER_CAPACITY, iss),
-		recvBuf:          NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
-		recvChan:         make(chan *proto.TCPPacket, 1),
-		closeC:           make(chan struct{}, 1),
+		t:              t,
+		TCPEndpointID:  endpoint,
+		socketId:       atomic.AddInt32(&t.socketNum, 1),
+		state:          state,
+		stateMu:        sync.RWMutex{},
+		srtt:           &SRTT{}, //TODO
+		irs:            remoteInitSeqNum,
+		iss:            iss,
+		sndNxt:         &atomic.Uint32{},
+		sndUna:         &atomic.Uint32{},
+		sndWnd:         &atomic.Int32{},
+		expectedSeqNum: &atomic.Uint32{},
+		windowSize:     &atomic.Int32{},
+		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
+		recvBuf:        NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
+		earlyArrivalQ:  PriorityQueue{},
+		inflightQ:      deque.New[*proto.TCPPacket](),
+		recvChan:       make(chan *proto.TCPPacket, 1),
+		closeC:         make(chan struct{}, 1),
+		timeWaitReset:  make(chan bool),
 	}
-	conn.seqNum.Store(iss)
+	conn.sndNxt.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
+	heap.Init(&conn.earlyArrivalQ)
 	return conn
 }
 
 // TODO: This should follow state machine CLOSE in the RFC
 func (conn *VTCPConn) VClose() error {
-	conn.closeC <- struct{}{}
-	return nil
+	// conn.closeC <- struct{}{}
+	return conn.activeClose()
 }
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
@@ -59,36 +67,70 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 }
 
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
-	bytesWritten := conn.sendBuf.write(data) // could block
-	return bytesWritten, nil                 // TODO: in what circumstances can it err?
+	bytesWritten := 0
+	for bytesWritten < len(data) {
+		conn.stateMu.RLock()
+		if conn.state == FIN_WAIT_1 || conn.state == FIN_WAIT_2 || conn.state == CLOSING || conn.state == TIME_WAIT {
+			conn.stateMu.RUnlock()
+			return bytesWritten, errors.New("trying to write to a non-established connection")
+		}
+		conn.stateMu.RUnlock()
+		w := conn.write(data[bytesWritten:])
+		bytesWritten += w
+	}
+	return bytesWritten, nil
 }
 
 /************************************ Private funcs ***********************************/
+
+func (conn *VTCPConn) run() {
+	for {
+		segment := <-conn.recvChan
+		conn.stateMachine(segment)
+	}
+}
 
 // Send out new data in the send buffer
 // TODO: should only run in established state?
 func (conn *VTCPConn) send() {
 	for {
-		bytesToSend := conn.sendBuf.send(conn.seqNum.Load(), proto.MSS) // could block
+		// TODO: zero window probing
+		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS) // could block
+		if numBytes == 0 {
+			continue
+		}
 		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.seqNum.Load(), conn.expectedSeqNum.Load(), //this not correct...
+			conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
 		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 		if err != nil {
 			logger.Println(err)
 			return
 		}
+		// conn.inflightQ.PushBack(packet)
 		// update seq number
-		conn.seqNum.Add(uint32(len(bytesToSend)))
+		conn.sndNxt.Add(uint32(numBytes))
 	}
 }
 
-func (conn *VTCPConn) run() {
-	conn.stateMu.RLock()
-	defer conn.stateMu.RUnlock()
-	for stateFunc := stateFuncMap[conn.state]; stateFunc != nil; stateFunc = stateFuncMap[conn.state] {
-		conn.stateMu.RUnlock()
-		stateFunc(conn)
-		conn.stateMu.RLock()
+// Mark sequences up to ackNum as acked
+func (conn *VTCPConn) ack(ackNum uint32) error {
+	if conn.sndUna.Load() < ackNum {
+		conn.sndUna.Store(ackNum)
+		conn.sendBuf.mu.Lock()
+		conn.sendBuf.freespaceC <- struct{}{}
+		conn.sendBuf.mu.Unlock()
+		// conn.ackInflight(ackNum)
+	}
+	return nil
+}
+
+func (conn *VTCPConn) ackInflight(ackNum uint32) {
+	for conn.inflightQ.Len() > 0 {
+		packet := conn.inflightQ.Front()
+		if packet.TcpHeader.SeqNum >= ackNum { // TODO: this doesn't account for the situation when only a portion of the packet was acked
+			return
+		}
+		conn.inflightQ.PopFront()
 	}
 }

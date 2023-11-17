@@ -8,6 +8,7 @@ import (
 const (
 	MAX_UINT16      = 65535
 	MIN_RANDOM_PORT = 20000
+	MSL             = 3 * time.Second
 )
 
 func IsUint16(num int) bool {

@@ -49,7 +49,7 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 
 	// 3. send back SYN+ACK packet
 	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
-		conn.localInitSeqNum, conn.expectedSeqNum.Load(),
+		conn.iss, conn.expectedSeqNum.Load(),
 		header.TCPFlagSyn|header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
 
 	err := send(l.t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
@@ -58,9 +58,9 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 		return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
 	}
 
-	logger.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+	fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
 
-	conn.seqNum.Add(1)
+	conn.sndNxt.Add(1)
 	go conn.run() // conn goes into SYN_RECEIVED state
 	return conn, nil
 }
