@@ -1,6 +1,7 @@
 package tcpstack
 
 import (
+	"fmt"
 	"iptcp-nora-yu/pkg/proto"
 
 	"github.com/google/netstack/tcpip/header"
@@ -36,228 +37,418 @@ var stateString = []string{
 	"LAST_ACK",
 }
 
-var stateFuncMap = []func(*VTCPConn){
+var stateFuncMap = []func(*VTCPConn, *proto.TCPPacket){
 	nil,
 	nil,
-	handleSynRcvd,
-	handleSynSent,
-	handleEstablished,
-	handleFinWait1,
-	handleFinWait2,
-	handleClosing,
-	handleTimeWait,
-	handleCloseWait,
-	handleLastAck,
+	stateFuncSynRcvd,
+	stateFuncSynSent,
+	stateFuncEstablished,
+	stateFuncFinWait1,
+	stateFuncFinWait2,
+	stateFuncClosing,
+	stateFuncTimeWait,
+	stateFuncCloseWait,
+	stateFuncLastAck,
 }
 
-func handleSynRcvd(conn *VTCPConn) {
-	// wait for ACK, or close signal
-	select {
-	case <-conn.closeC:
-		// transit to active close state?
-
-	case packet := <-conn.recvChan:
-		// if we have an only-ACK packet
-		if packet.TcpHeader.Flags != header.TCPFlagAck {
-			// TODO: should we delete the socket from the table????
-			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error accpeting new conn. Flag of the back packet is not only-ACK but %v\n", packet.TcpHeader.Flags)
-			return
-		}
-
-		// check if seqNum matches our expected SeqNum
-		if packet.TcpHeader.SeqNum != conn.expectedSeqNum.Load() {
-			// should we delete the socket from the table????
-			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error accpeting new conn. Seq number received %v, expected %v\n", packet.TcpHeader.SeqNum, conn.expectedSeqNum)
-			return
-		}
-		if packet.TcpHeader.AckNum != conn.iss+1 {
-			// should we delete the socket from the table????
-			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error accpeting new conn. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.iss+1)
-			return
-		}
-
-		conn.sndUna.Store(packet.TcpHeader.AckNum)
-		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
-
-		conn.stateMu.Lock()
-		conn.state = ESTABLISHED
-		conn.stateMu.Unlock()
-		go conn.send()
+func (conn *VTCPConn) stateMachine(segment *proto.TCPPacket) {
+	conn.stateMu.RLock()
+	stateFunc := stateFuncMap[conn.state]
+	conn.stateMu.RUnlock()
+	if stateFunc != nil {
+		stateFunc(conn, segment)
 	}
 }
 
-func handleSynSent(conn *VTCPConn) {
-	// wait for SYN+ACK, or close signal
-	select {
-	case <-conn.closeC:
-		// transit to active close state?
-	case packet := <-conn.recvChan:
-		if packet.TcpHeader.Flags != header.TCPFlagSyn|header.TCPFlagAck {
-			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("Flag is not SYN+ACK but %v\n", packet.TcpHeader.Flags)
-			return
-		}
-		if packet.TcpHeader.AckNum != conn.iss+1 {
-			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Printf("error completing a handshake. Ack number received %v, expected %v\n", packet.TcpHeader.AckNum, conn.iss+1)
-			return
-		}
+func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
+	_, _, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
 
-		conn.sndUna.Store(packet.TcpHeader.AckNum)
-		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
-		conn.irs = packet.TcpHeader.SeqNum
-		conn.expectedSeqNum.Store(packet.TcpHeader.SeqNum + 1)
+	if !segment.IsAck() {
+		conn.t.deleteSocket(conn.TCPEndpointID)
+		logger.Printf("ACK bit is not set in SYN-RECEIVED. Dropping...")
+		return
+	}
 
-		// send ACK
-		newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.sndNxt.Load(), packet.TcpHeader.SeqNum+1,
-			header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY)
-		err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+	sndUna := conn.sndUna.Load()
+	segAck := segment.TcpHeader.AckNum
+	sndNxt := conn.sndNxt.Load()
+
+	if sndUna < segAck && segAck <= sndNxt {
+		conn.stateMu.Lock()
+		conn.state = ESTABLISHED
+		conn.stateMu.Unlock()
+		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+		conn.sndUna.Store(segAck)
+		go conn.send()
+	} else {
+		logger.Printf("ACK is not acceptable.")
+	}
+
+	if segment.IsFin() {
+		err := handleFin(segment, conn)
 		if err != nil {
-			// should we delete the socket from the table????
-			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Printf("error handling fin packet")
 			return
 		}
+		conn.stateMu.Lock()
+		conn.state = CLOSE_WAIT
+		conn.stateMu.Unlock()
+	}
+}
 
+// See 3.10.7.3 SYN-SENT STATE
+func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
+
+	// We only care SYN + ACK for simplification
+	if !packet.IsAck() && !packet.IsSyn() {
+		conn.t.deleteSocket(conn.TCPEndpointID)
+		logger.Printf("Unacceptable packet. Dropping...")
+		return
+	}
+
+	segSeq := packet.TcpHeader.SeqNum
+	sndNxt := conn.sndNxt.Load()
+	sndUna := conn.sndUna.Load()
+	segAck := packet.TcpHeader.AckNum
+
+	//1. Check Ack bit is in the range
+	if sndUna >= segAck && segAck > sndNxt {
+		conn.t.deleteSocket(conn.TCPEndpointID)
+		logger.Printf("Unacceptable packet. Dropping...")
+		return
+	}
+
+	conn.expectedSeqNum.Store(packet.TcpHeader.SeqNum + 1)
+	conn.recvBuf.AdvanceNxt(segSeq, false)
+	conn.recvBuf.SetLBR(segSeq)
+	conn.irs = segSeq
+	conn.sndUna.Store(segAck)
+	sndUna = conn.sndUna.Load()
+
+	// TODO : clear retransmission queue
+
+	if sndUna > conn.iss {
 		conn.stateMu.Lock()
 		conn.state = ESTABLISHED
 		conn.stateMu.Unlock()
-		go conn.send()
-	}
+		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
 
+		err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		if err != nil {
+			conn.t.deleteSocket(conn.TCPEndpointID)
+			return
+		}
+		go conn.send()
+	} else {
+		conn.t.deleteSocket(conn.TCPEndpointID)
+		logger.Printf("Unacceptable packet. Dropping...")
+	}
 }
 
-func handleEstablished(conn *VTCPConn) {
-	select {
-	case <-conn.closeC:
-		// transit to active close state?
+func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
+	aggData, aggSegLen, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
 
-	case segment := <-conn.recvChan:
-		segLen := len(segment.Payload)
-
-		if segment.TcpHeader.AckNum >= conn.sndUna.Load() {
-			conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+		return
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
 		}
-		conn.ack(segment.TcpHeader.AckNum) // must update SND.WND before calling ack!
+	}
 
-		if segLen > 0 {
-			if conn.recvBuf.IsFull() {
-				logger.Println("window size is 0. sending ack...")
-				newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-					conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
-					header.TCPFlagAck, []byte{}, 0)
-				err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-				if err != nil {
-					logger.Println(err)
-					return
-				}
-				logger.Println("Ack is sent. Dropping the packet...")
-				return
-			}
+	if aggSegLen > 0 {
+		err = handleSegText(aggData, aggSegLen, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+	}
 
-			if segment.TcpHeader.SeqNum > conn.expectedSeqNum.Load() { // TODO : maybe needs to change the range of head tail of buff
-				// TODO : Out-of-order: queue as early arrival or should we just write to the buffer and let the buffer handle it
-				if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // send challenge ACK
-					logger.Printf("challenge ACK is sent. Dropping the packet...")
-					// seq = sendBuff.nxt; ack = recvBuff.nxt; flag = ack
-					return
-				}
-				return
-			}
+	if segment.IsFin() {
+		err := handleFin(segment, conn)
+		if err != nil {
+			logger.Printf("error handling fin packet")
+			return
+		}
+		conn.stateMu.Lock()
+		conn.state = CLOSE_WAIT
+		conn.stateMu.Unlock()
+		return
+	}
+}
 
-			// TODO : Out-of-order : we should deliver its next segment if it was a early arrival  --> check early arrival queue
-			if segment.TcpHeader.SeqNum < conn.expectedSeqNum.Load() {
-				// seen segments. simply discard and do not write into the buffer
-				// TODO: need to account for seqNum wrap around?
-				logger.Println("Discard seen segment: ", segment.TcpHeader.SeqNum)
-			} else {
-				n, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
-				if err != nil {
-					logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
-					//should we drop the packet...?
-					return
-				}
-				logger.Printf("received %d bytes\n", n)
-				conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
-			}
+func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
 
-			newWindowSize := conn.recvBuf.FreeSpace()
-			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize))) // TODO: simplifiable?
+	aggData, aggSegLen, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
 
-			// sends largest contiguous ack and left-over window size back
-			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
-				header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
-			err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-			if err != nil {
-				return
-			}
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+		return
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		//2. check if fin is acked
+		if segment.TcpHeader.AckNum == conn.sndNxt.Load() {
+			conn.state = FIN_WAIT_2
+			return
+		}
+	}
+
+	if aggSegLen > 0 {
+		err = handleSegText(aggData, aggSegLen, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+	}
+
+	if segment.IsFin() {
+		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
+			conn.state = TIME_WAIT
+			go timeWaitTimer(conn)
+		} else {
+			conn.state = CLOSING
+		}
+	}
+}
+
+func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
+
+	aggData, aggSegLen, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+		return
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
 		}
 
-		if segment.TcpHeader.Flags == header.TCPFlagFin|header.TCPFlagAck {
-			//send ack back
-			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-				segment.TcpHeader.AckNum, segment.TcpHeader.SeqNum+1,
-				header.TCPFlagAck, make([]byte, 0), BUFFER_CAPACITY) // TODO: seqnum and acknum correct?
-
-			err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+		// ACK Close.
+		if conn.inflightQ.Len() == 0 && segment.IsFin() {
+			conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+			err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 			if err != nil {
 				logger.Println(err)
 				return
 			}
-			conn.stateMu.Lock()
-			conn.state = CLOSE_WAIT
-			conn.stateMu.Unlock()
+		}
+	}
+
+	// TODO : Reference code is simplified. This is not consistent with TCP protocol
+	if aggSegLen > 0 {
+		// TCP protocol
+		err = handleSegText(aggData, aggSegLen, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+
+		// Reference code:
+		// err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin)
+		// if err != nil {
+		// 	logger.Println(err)
+		// 	return
+		// }
+	}
+
+	if segment.IsFin() {
+		conn.state = TIME_WAIT
+		go timeWaitTimer(conn)
+	}
+}
+
+func stateFuncCloseWait(conn *VTCPConn, segment *proto.TCPPacket) {
+	_, _, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
 			return
 		}
 	}
 }
 
-func handleCloseWait(conn *VTCPConn) {
-	// segment := <-conn.recvChan
-	//check RST bit
-	conn.state = LAST_ACK
+func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
+
+	_, _, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
+			conn.state = TIME_WAIT
+		} else {
+			logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		}
+	}
 }
 
-func handleLastAck(conn *VTCPConn) {
-	conn.state = CLOSED
+func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
+
+	_, _, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
+			conn.state = CLOSED
+			fmt.Printf("Socket %v closed", conn.socketId)
+			conn.t.deleteSocket(conn.TCPEndpointID)
+		} else {
+			logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		}
+	}
 }
 
-func handleFinWait1(conn *VTCPConn) {
-	// packet := <-conn.recvChan
+func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
+
+	_, _, err := handleSeqNum(segment, conn)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if !segment.IsAck() {
+		logger.Printf("ACK bit is off. Dropping the packet...")
+	} else {
+		err := handleAck(segment, conn)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		conn.timeWaitReset <- true
+	}
+
+	if segment.IsFin() {
+		conn.timeWaitReset <- true
+	}
 }
 
-func handleFinWait2(conn *VTCPConn) {
-	// packet := <-conn.recvChan
-	conn.state = TIME_WAIT
+// See RFC 9293 - 3.10.4 CLOSE Call
+func (conn *VTCPConn) activeClose() (err error) {
+	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
+	//at this point, closed state and listen state are already handled
+	switch conn.state {
+	case SYN_SENT:
+		err = fmt.Errorf("connection closing")
+		conn.t.deleteSocket(conn.TCPEndpointID)
+	case SYN_RECEIVED:
+		conn.sendBuf.mu.Lock()
+		size := conn.numBytesNotSent()
+		conn.sendBuf.mu.Unlock()
+		// If no SENDs have been issued and there is no pending data to send
+		if conn.sndNxt.Load() != conn.iss+1 && size == 0 {
+			err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin)
+			if err != nil {
+				return err
+			}
+			conn.state = FIN_WAIT_1
+		}
+	case ESTABLISHED:
+		//  wait until send buff is empty. Potential Deadlock
+		conn.sendBuf.mu.Lock()
+		size := conn.numBytesNotSent()
+		conn.sendBuf.mu.Unlock()
+
+		for size > 0 {
+			conn.sendBuf.mu.Lock()
+			size = conn.numBytesNotSent()
+			conn.sendBuf.mu.Unlock()
+		}
+
+		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
+		if err != nil {
+			return err
+		}
+		conn.sndNxt.Add(1)
+		conn.state = FIN_WAIT_1
+	case CLOSE_WAIT:
+		//  wait until send buff is empty. Potential Deadlock
+		conn.sendBuf.mu.Lock()
+		size := conn.numBytesNotSent()
+		conn.sendBuf.mu.Unlock()
+
+		for size > 0 {
+			conn.sendBuf.mu.Lock()
+			size = conn.numBytesNotSent()
+			conn.sendBuf.mu.Unlock()
+		}
+
+		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
+		if err != nil {
+			return err
+		}
+		conn.sndNxt.Add(1)
+		conn.state = LAST_ACK
+	default:
+		err = fmt.Errorf("connection closing")
+	}
+	return err
 }
-
-func handleClosing(conn *VTCPConn) {
-	// packet := <-conn.recvChan
-	conn.state = TIME_WAIT
-}
-
-func handleTimeWait(conn *VTCPConn) {
-	// segment := <-conn.recvChan
-	//check RST bit
-	//check SYN bit
-	conn.state = CLOSED
-}
-
-// func (conn *VTCPConn) handleClosed() error {
-// 	if conn == nil {
-// 		return fmt.Errorf("connection does not exist")
-// 	}
-// 	return nil
-// }
-
-// func (conn *VTCPConn) handleCloseWait() error {
-// 	return io.EOF
-// }
-
-// func (conn *VTCPConn) handleTimeWait() error {
-// 	return fmt.Errorf("connection closing")
-// }

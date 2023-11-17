@@ -92,8 +92,8 @@ func (conn *VTCPConn) write(data []byte) int {
 	return int(numBytes)
 }
 
-// Return the segment corresponding to seqNum. For retransmission
-func (b *sendBuf) getBytesFromSendBuf(seqNum uint32, length int) []byte {
+// Return the segment corresponding to seqNum. Use for retransmission
+func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 	if length == 0 {
 		return nil
 	}

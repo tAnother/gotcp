@@ -34,4 +34,21 @@ r 1 4       ==> bbee
 
 ## Connection teardown
 
+### Active Close
+
+#### Listener
+
+- Established: 
+
+    `cl 0` : should not be able to connect to the listen port. Retransmit the SYN packet till failure.
+    ![Alt text](./md_images/tcp/listener_close.png)
+
+#### Normal socket
+
+ - Established: 
+    On h2, `cl 0`; then on h1, `cl 1`.
+    ![Alt text](./md_images/tcp/normal_close.png)
+    ![Alt text](./md_images/tcp/image.png)
+    ![Alt text](./md_images/tcp/normal_close_wireshark.png)
+
 ## Out-of-order packets

@@ -3,6 +3,7 @@ package tcpstack
 import (
 	"container/heap"
 	"errors"
+	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
@@ -36,18 +37,18 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		inflightQ:      deque.New[*proto.TCPPacket](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		closeC:         make(chan struct{}, 1),
+		timeWaitReset:  make(chan bool),
 	}
 	conn.sndNxt.Store(iss)
+	conn.sndUna.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
 	return conn
 }
 
-// TODO: This should follow state machine CLOSE in the RFC
 func (conn *VTCPConn) VClose() error {
-	conn.closeC <- struct{}{}
-	return nil
+	return conn.activeClose()
 }
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
@@ -55,6 +56,10 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	if conn.state == CLOSE_WAIT {
 		conn.stateMu.RUnlock()
 		return 0, io.EOF
+	}
+	if conn.state == FIN_WAIT_2 || conn.state == FIN_WAIT_1 || conn.state == CLOSING {
+		conn.stateMu.RUnlock()
+		return 0, fmt.Errorf("operation not permitted")
 	}
 	conn.stateMu.RUnlock()
 	readBuff := conn.recvBuf
@@ -84,12 +89,9 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
-	conn.stateMu.RLock()
-	defer conn.stateMu.RUnlock()
-	for stateFunc := stateFuncMap[conn.state]; stateFunc != nil; stateFunc = stateFuncMap[conn.state] {
-		conn.stateMu.RUnlock()
-		stateFunc(conn)
-		conn.stateMu.RLock()
+	for {
+		segment := <-conn.recvChan
+		conn.stateMachine(segment)
 	}
 }
 

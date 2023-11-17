@@ -2,6 +2,7 @@ package tcpstack
 
 import (
 	"fmt"
+	"io"
 	"sync"
 )
 
@@ -19,6 +20,7 @@ type CircBuff struct {
 	lbr      uint32
 	nxt      uint32
 	isFull   bool
+	finRecvd bool
 	canRead  chan struct{}
 	lock     sync.Mutex
 }
@@ -41,6 +43,10 @@ func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) {
 
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
+
+	if cb.finRecvd && cb.nxt-1 == cb.lbr {
+		return 0, io.EOF
+	}
 
 	// 1. Base case: empty circular buff
 	if ((cb.nxt-1)%cb.capacity == cb.lbr%cb.capacity) && !cb.isFull {
@@ -236,4 +242,17 @@ func (cb *CircBuff) LastByteRead() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	return cb.lbr
+}
+
+func (cb *CircBuff) AdvanceNxt(seq uint32, isFin bool) {
+	cb.lock.Lock()
+	defer cb.lock.Unlock()
+	cb.finRecvd = isFin
+	cb.nxt = seq + 1
+}
+
+func (cb *CircBuff) SetLBR(seq uint32) {
+	cb.lock.Lock()
+	defer cb.lock.Unlock()
+	cb.lbr = seq
 }

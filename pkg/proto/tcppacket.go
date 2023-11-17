@@ -141,3 +141,21 @@ func ValidTCPChecksum(p *TCPPacket, srcIp netip.Addr, dstIp netip.Addr) bool {
 	tcpComputedChecksum := ComputeTCPChecksum(p.TcpHeader, srcIp, dstIp, p.Payload)
 	return tcpComputedChecksum == tcpChecksumFromHeader
 }
+
+/************************************ TCP Packet Helpers ***********************************/
+
+func (p *TCPPacket) IsAck() bool {
+	return p.TcpHeader.Flags&header.TCPFlagAck != 0
+}
+
+func (p *TCPPacket) IsSyn() bool {
+	return p.TcpHeader.Flags&header.TCPFlagSyn != 0
+}
+
+func (p *TCPPacket) IsFin() bool {
+	return p.TcpHeader.Flags&header.TCPFlagFin != 0
+}
+
+func (p *TCPPacket) IsRst() bool {
+	return p.TcpHeader.Flags&header.TCPFlagRst != 0
+}

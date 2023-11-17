@@ -73,8 +73,9 @@ type VTCPConn struct { // represents a TCP socket
 	earlyArrivalQ PriorityQueue
 	inflightQ     *deque.Deque[*proto.TCPPacket]
 
-	recvChan chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
-	closeC   chan struct{}         // for closing // TODO: or also for other user input...?
+	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
+	timeWaitReset chan bool
+	closeC        chan struct{} // for closing // TODO: or also for other user input...?
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
