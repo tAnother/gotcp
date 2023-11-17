@@ -263,21 +263,12 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 		}
 	}
 
-	// TODO : Reference code is simplified. This is not consistent with TCP protocol
 	if aggSegLen > 0 {
-		// TCP protocol
 		err = handleSegText(aggData, aggSegLen, conn)
 		if err != nil {
 			logger.Println(err)
 			return
 		}
-
-		// Reference code:
-		// err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin)
-		// if err != nil {
-		// 	logger.Println(err)
-		// 	return
-		// }
 	}
 
 	if segment.IsFin() {
