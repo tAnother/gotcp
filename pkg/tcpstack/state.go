@@ -156,11 +156,6 @@ func handleEstablished(conn *VTCPConn) {
 				}
 				logger.Println("Ack is sent. Dropping the packet...")
 				return
-
-				// if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst { // but if RST bit is set, drop the packet and return
-				// 	logger.Printf("a retransmitted non-accpetable packet. Dropping the packet...")
-				// 	return
-				// }
 			}
 
 			if segment.TcpHeader.SeqNum > conn.expectedSeqNum.Load() { // TODO : maybe needs to change the range of head tail of buff
@@ -173,30 +168,30 @@ func handleEstablished(conn *VTCPConn) {
 				return
 			}
 
-			// at this point, we received the next byte expected segment, and it's inside the window
-			// if segment.TcpHeader.Flags&header.TCPFlagRst == header.TCPFlagRst {
-			// 	// reset the connection RFC9293 3.10.7
-			// 	return
-			// }
-
 			// TODO : Out-of-order : we should deliver its next segment if it was a early arrival  --> check early arrival queue
-			n, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
-			if err != nil {
-				logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
-				//should we drop the packet...?
-				return
+			if segment.TcpHeader.SeqNum < conn.expectedSeqNum.Load() {
+				// seen segments. simply discard and do not write into the buffer
+				// TODO: need to account for seqNum wrap around?
+				logger.Println("Discard seen segment: ", segment.TcpHeader.SeqNum)
+			} else {
+				n, err := conn.recvBuf.Write(segment.Payload) // this will write as much as possible. Trim off any additional data
+				if err != nil {
+					logger.Printf("failed to write to the read buffer error: %v. dropping the packet...", err)
+					//should we drop the packet...?
+					return
+				}
+				logger.Printf("received %d bytes\n", n)
+				conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
 			}
-			logger.Printf("received %d bytes\n", n)
 
-			conn.expectedSeqNum.Add(uint32(n)) //TODO : Out-of-order should be updated for early arrival; should not update expected seq num here
 			newWindowSize := conn.recvBuf.FreeSpace()
-			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
+			conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize))) // TODO: simplifiable?
 
 			// sends largest contiguous ack and left-over window size back
 			newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 				header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
-			err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			err := send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 			if err != nil {
 				return
 			}
@@ -213,7 +208,6 @@ func handleEstablished(conn *VTCPConn) {
 				logger.Println(err)
 				return
 			}
-			conn.sndNxt.Add(1)
 			conn.stateMu.Lock()
 			conn.state = CLOSE_WAIT
 			conn.stateMu.Unlock()

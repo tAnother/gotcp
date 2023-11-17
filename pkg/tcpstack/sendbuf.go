@@ -80,11 +80,11 @@ func (conn *VTCPConn) write(data []byte) int {
 	lbwIdx := b.index(b.lbw)
 
 	if lbwIdx+numBytes <= b.capacity {
-		copy(b.buf[lbwIdx:], data)
+		copy(b.buf[lbwIdx:], data[:numBytes])
 	} else { // need to wrap around
 		firstHalf := int(b.capacity) - int(lbwIdx)
 		copy(b.buf[lbwIdx:], data[:firstHalf])
-		copy(b.buf[0:], data[firstHalf:])
+		copy(b.buf[0:], data[firstHalf:numBytes])
 	}
 
 	b.lbw += uint32(numBytes)

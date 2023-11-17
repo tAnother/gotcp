@@ -112,6 +112,7 @@ func (conn *VTCPConn) send() {
 			logger.Println(err)
 			return
 		}
+		// logger.Println("Sent packet with bytes: ", string(bytesToSend))
 		// conn.inflightQ.PushBack(packet)
 		// update seq number
 		conn.sndNxt.Add(uint32(numBytes))
@@ -146,15 +147,20 @@ func (conn *VTCPConn) zeroWindowProbe() {
 		conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 		header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
 
-	tk := time.NewTicker(1 * time.Second)
+	interval := float64(1) // TODO: should be RTO
+	timeout := time.NewTimer(time.Duration(interval) * time.Second)
 	for conn.sndWnd.Load() == 0 {
-		<-tk.C
+		<-timeout.C
+
 		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		logger.Println("Sent zwp packet with byte: ", bytesToSend)
 		if err != nil {
 			logger.Println(err)
 			return
 		}
+		// logger.Println("Sent zwp packet with byte: ", string(bytesToSend))
+
+		interval *= 1.2 // TODO: determine the factor
+		timeout.Reset(time.Duration(interval) * time.Second)
 	}
 	if conn.sndUna.Load() > conn.sndNxt.Load() {
 		conn.sndNxt.Add(1) // increment only after this one byte is acked - UNSAFE? what if nxt wraps around?
