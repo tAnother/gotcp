@@ -2,15 +2,17 @@ package repl
 
 // note: based off of csci1270-fall23
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/chzyer/readline"
 )
 
 type REPL struct {
+	rl       *readline.Instance
 	Commands map[string]func(string, *REPLConfig) error
 	Help     map[string]string
 }
@@ -20,7 +22,20 @@ type REPLConfig struct {
 }
 
 func NewRepl() *REPL {
-	r := &REPL{make(map[string]func(string, *REPLConfig) error), make(map[string]string)}
+	l, err := readline.NewEx(&readline.Config{
+		Prompt:            "> ",
+		HistoryFile:       "/tmp/repl.tmp",
+		InterruptPrompt:   "^C",
+		HistorySearchFold: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	r := &REPL{
+		rl:       l,
+		Commands: make(map[string]func(string, *REPLConfig) error),
+		Help:     make(map[string]string),
+	}
 	return r
 }
 
@@ -62,18 +77,18 @@ func (r *REPL) HelpString() string {
 }
 
 func (r *REPL) Run() {
-	reader := os.Stdin
 	writer := os.Stdout
-	scanner := bufio.NewScanner((reader))
 	replConfig := &REPLConfig{Writer: writer}
 
-	// begin the repl
-	io.WriteString(writer, ">") // the prompt
-	for scanner.Scan() {
-		input := strings.TrimSpace(scanner.Text())
-		if scanner.Err() != nil {
-			break
+	for {
+		input, err := r.rl.Readline()
+		if err == readline.ErrInterrupt {
+			return
+		} else if err == io.EOF {
+			return
 		}
+
+		input = strings.TrimSpace(input)
 		command := strings.Split(input, " ")[0]
 		handler, ok := r.Commands[command]
 
@@ -86,7 +101,5 @@ func (r *REPL) Run() {
 				io.WriteString(writer, fmt.Sprintf("Error: %v\n", err))
 			}
 		}
-
-		io.WriteString(writer, ">")
 	}
 }
