@@ -70,6 +70,7 @@ func (t *TCPGlobalInfo) findNormalSocket(id int32) *VTCPConn {
 
 // Send tcp packet
 func send(t *TCPGlobalInfo, p *proto.TCPPacket, srcIP netip.Addr, destIP netip.Addr) error {
+	p.TcpHeader.Checksum = 0
 	p.TcpHeader.Checksum = proto.ComputeTCPChecksum(p.TcpHeader, srcIP, destIP, p.Payload)
 	tcpHeaderBytes := make(header.TCP, proto.DefaultTcpHeaderLen)
 	tcpHeaderBytes.Encode(p.TcpHeader)

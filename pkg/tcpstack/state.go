@@ -138,11 +138,10 @@ func handleEstablished(conn *VTCPConn) {
 	case segment := <-conn.recvChan:
 		segLen := len(segment.Payload)
 
-		if segment.TcpHeader.AckNum > conn.sndUna.Load() {
-			conn.sndUna.Store(segment.TcpHeader.AckNum)
-			conn.ack(segment.TcpHeader.AckNum)
+		if segment.TcpHeader.AckNum >= conn.sndUna.Load() {
 			conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		}
+		conn.ack(segment.TcpHeader.AckNum) // must update SND.WND before calling ack!
 
 		if segLen > 0 {
 			if conn.recvBuf.IsFull() {
