@@ -2,6 +2,7 @@ package tcpstack
 
 import (
 	"container/heap"
+	"errors"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
 	"sync"
@@ -56,7 +57,7 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	}
 	conn.stateMu.RUnlock()
 	readBuff := conn.recvBuf
-	bytesRead, err := readBuff.Read(buf) //this will block if nothing to read in the buffer
+	bytesRead, err := readBuff.Read(buf) // this will block if nothing to read in the buffer
 	if err != nil {
 		return 0, err
 	}
@@ -65,8 +66,18 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 }
 
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
-	bytesWritten := conn.write(data) // could block
-	return bytesWritten, nil         // TODO: in what circumstances can it err?
+	bytesWritten := 0
+	for bytesWritten < len(data) {
+		conn.stateMu.RLock()
+		if conn.state == FIN_WAIT_1 || conn.state == FIN_WAIT_2 || conn.state == CLOSING || conn.state == TIME_WAIT {
+			conn.stateMu.RUnlock()
+			return bytesWritten, errors.New("trying to write to a non-established connection")
+		}
+		conn.stateMu.RUnlock()
+		w := conn.write(data[bytesWritten:])
+		bytesWritten += w
+	}
+	return bytesWritten, nil
 }
 
 /************************************ Private funcs ***********************************/
@@ -87,11 +98,11 @@ func (conn *VTCPConn) send() {
 	for {
 		// TODO: zero window probing
 		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS) // could block
-		if numBytes == 0 {                                    // nothing to send
+		if numBytes == 0 {
 			continue
 		}
 		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.sndNxt.Load(), conn.expectedSeqNum.Load(), //this not correct...
+			conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
 		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 		if err != nil {
