@@ -110,7 +110,12 @@ func closeHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 		}
 		l := t.findListenerSocket(int32(id))
 		if l != nil {
-			return l.VClose()
+			err := l.VClose()
+			if err != nil {
+				return err
+			}
+			io.WriteString(config.Writer, fmt.Sprintf("Socket %v closed\n", l.socketId))
+			return nil
 		}
 		conn := t.findNormalSocket(int32(id))
 		if conn != nil {
