@@ -209,22 +209,23 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 		}
 
 		go func() {
+			defer file.Close()
 			reader := bufio.NewReaderSize(file, proto.MSS)
 			buf := make([]byte, proto.MSS)
 			bytesWritten := 0
 			for {
 				b, err := reader.Read(buf)
 				if err == io.EOF {
-					file.Close()
-					//Done sending. Close the connection
+					// Done sending. Close the connection
 					err = conn.VClose()
 					if err != nil {
 						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
 					}
-					break
-				} else if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("Sent %v bytes\n", bytesWritten))
+					return
+				}
+				if err != nil {
 					io.WriteString(config.Writer, fmt.Sprintf("error reading from file: %v\n", err))
-					file.Close()
 					return
 				}
 				// logger.Printf("read %d bytes\n", b)
@@ -232,12 +233,10 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 				w, err := conn.VWrite(buf[:b])
 				if err != nil {
 					io.WriteString(config.Writer, fmt.Sprintf("error sending file: %v\n", err))
-					file.Close()
 					return
 				}
 				bytesWritten += w
 			}
-			io.WriteString(config.Writer, fmt.Sprintf("Sent %v bytes\n", bytesWritten))
 		}()
 		return nil
 	}
