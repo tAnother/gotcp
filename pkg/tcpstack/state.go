@@ -129,9 +129,6 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	conn.sndUna.Store(segAck)
 	sndUna = conn.sndUna.Load()
 
-	// 3.10.7.3 fourth SYN bit
-	// conn.ackInflight(segAck)
-
 	if sndUna > conn.iss {
 		conn.stateMu.Lock()
 		conn.state = ESTABLISHED
