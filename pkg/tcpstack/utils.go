@@ -9,6 +9,10 @@ const (
 	MAX_UINT16      = 65535
 	MIN_RANDOM_PORT = 20000
 	MSL             = 3 * time.Second
+	MIN_RTO         = 100  //100 ms
+	MAX_RTO         = 5000 // 5 s
+	ALPHA           = 0.8
+	BETA            = 1.6
 )
 
 func IsUint16(num int) bool {
