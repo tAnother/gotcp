@@ -21,6 +21,7 @@ func TcpRepl(t *TCPGlobalInfo) *repl.REPL {
 	r.AddCommand("r", readBytesHandler(t), "Read n bytes of data on a socket. usage: r <socket ID> <numbytes>")
 	r.AddCommand("s", sendBytesHandler(t), "Send n bytes of data on a socket. usage: s <socket ID> <bytes to send>")
 	r.AddCommand("sf", sendFileHandler(t), "Send file to destination addr port. usage: sf <file path> <dst addr> <dst port>")
+	r.AddCommand("rf", readFileHandler(t), "Read a file into the destination file on a listening port. usage: rf <dest file> <port>")
 	return r
 }
 
@@ -214,23 +215,87 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 			for {
 				b, err := reader.Read(buf)
 				if err == io.EOF {
+					file.Close()
+					//Done sending. Close the connection
+					err = conn.VClose()
+					if err != nil {
+						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+					}
 					break
 				} else if err != nil {
 					io.WriteString(config.Writer, fmt.Sprintf("error reading from file: %v\n", err))
+					file.Close()
 					return
 				}
-				logger.Printf("read %d bytes\n", b)
+				// logger.Printf("read %d bytes\n", b)
 
 				w, err := conn.VWrite(buf[:b])
 				if err != nil {
 					io.WriteString(config.Writer, fmt.Sprintf("error sending file: %v\n", err))
+					file.Close()
 					return
 				}
 				bytesWritten += w
 			}
-			io.WriteString(config.Writer, fmt.Sprintf("Wrote %v bytes\n", bytesWritten))
+			io.WriteString(config.Writer, fmt.Sprintf("Sent %v bytes\n", bytesWritten))
 		}()
+		return nil
+	}
+}
 
+func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
+	return func(input string, config *repl.REPLConfig) error {
+		args := strings.Split(input, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("usage: rf <dest file> <port>")
+		}
+		f, err := os.OpenFile(args[1], os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			return fmt.Errorf("rf error: failed to open the file")
+		}
+		port, err := strconv.Atoi(args[2])
+		if err != nil {
+			f.Close()
+			return fmt.Errorf("rf error: <port> has to be an integer")
+		}
+
+		l, err := VListen(t, uint16(port))
+		if err != nil {
+			f.Close()
+			return fmt.Errorf("rf error: %v", err)
+		}
+
+		go func() {
+			conn, err := l.VAccept()
+			if err != nil {
+				io.WriteString(config.Writer, fmt.Sprintln(err))
+				f.Close()
+				return
+			}
+			io.WriteString(config.Writer, fmt.Sprintln("rf: client connected!"))
+			totalBytesRead := 0
+			for { //read until the sender closes the connection
+				buf := make([]byte, proto.MSS)
+				bytesRead, err := conn.VRead(buf)
+				f.Write(buf[:bytesRead]) //TODO : do we care about the error here?
+				totalBytesRead += bytesRead
+				if err == io.EOF {
+					f.Close()
+					//Done Receiving. Close the connection
+					err = l.VClose()
+					if err != nil {
+						io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
+					}
+					err = conn.VClose()
+					if err != nil {
+						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+					}
+					io.WriteString(config.Writer, fmt.Sprintf("Finish receiving the file. Received %d total bytes.\n", totalBytesRead))
+					break
+				}
+				logger.Printf("total read %d bytes so far", totalBytesRead)
+			}
+		}()
 		return nil
 	}
 }

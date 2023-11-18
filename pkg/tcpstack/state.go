@@ -384,16 +384,16 @@ func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
 // See RFC 9293 - 3.10.4 CLOSE Call
 func (conn *VTCPConn) activeClose() (err error) {
 	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
 	//at this point, closed state and listen state are already handled
 	switch conn.state {
 	case SYN_SENT:
 		err = fmt.Errorf("connection closing")
+		conn.stateMu.Unlock()
 		conn.t.deleteSocket(conn.TCPEndpointID)
 	case SYN_RECEIVED:
-		conn.sendBuf.mu.Lock()
+		conn.mu.Lock()
 		size := conn.numBytesNotSent()
-		conn.sendBuf.mu.Unlock()
+		conn.mu.Unlock()
 		// If no SENDs have been issued and there is no pending data to send
 		if conn.sndNxt.Load() != conn.iss+1 && size == 0 {
 			err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin)
@@ -402,16 +402,16 @@ func (conn *VTCPConn) activeClose() (err error) {
 			}
 			conn.state = FIN_WAIT_1
 		}
+		conn.stateMu.Unlock()
 	case ESTABLISHED:
-		//  wait until send buff is empty. Potential Deadlock
-		conn.sendBuf.mu.Lock()
+		conn.mu.Lock()
 		size := conn.numBytesNotSent()
-		conn.sendBuf.mu.Unlock()
+		conn.mu.Unlock()
 
 		for size > 0 {
-			conn.sendBuf.mu.Lock()
+			conn.mu.Lock()
 			size = conn.numBytesNotSent()
-			conn.sendBuf.mu.Unlock()
+			conn.mu.Unlock()
 		}
 
 		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
@@ -420,16 +420,16 @@ func (conn *VTCPConn) activeClose() (err error) {
 		}
 		conn.sndNxt.Add(1)
 		conn.state = FIN_WAIT_1
+		conn.stateMu.Unlock()
 	case CLOSE_WAIT:
-		//  wait until send buff is empty. Potential Deadlock
-		conn.sendBuf.mu.Lock()
+		conn.mu.Lock()
 		size := conn.numBytesNotSent()
-		conn.sendBuf.mu.Unlock()
+		conn.mu.Unlock()
 
 		for size > 0 {
-			conn.sendBuf.mu.Lock()
+			conn.mu.Lock()
 			size = conn.numBytesNotSent()
-			conn.sendBuf.mu.Unlock()
+			conn.mu.Unlock()
 		}
 
 		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
@@ -438,8 +438,10 @@ func (conn *VTCPConn) activeClose() (err error) {
 		}
 		conn.sndNxt.Add(1)
 		conn.state = LAST_ACK
+		conn.stateMu.Unlock()
 	default:
 		err = fmt.Errorf("connection closing")
+		conn.stateMu.Unlock()
 	}
 	return err
 }

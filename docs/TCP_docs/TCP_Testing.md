@@ -7,7 +7,7 @@
 3. Connect to an open port should create sockets on both sender and receiver: `c 10.0.0.1 9999`
 4. Connect to a non-existing port should error: `c 10.0.0.1 8888`
 5. Successful handshake
-![Alt text](./md_images/tcp/ideal_handshake.png)
+![Alt text](../md_images/tcp/ideal_handshake.png)
 
 ## Send and Recv CLI over non-lossy links
 
@@ -27,9 +27,18 @@ r 1 4       ==> bbee
 ```
 
 **Expected:**
-![Alt text](./md_images/tcp/terminal-read.png)
-![Alt text](./md_images/tcp/expected-non-lossy-read.png)
+![Alt text](../md_images/tcp/terminal-read.png)
+![Alt text](../md_images/tcp/expected-non-lossy-read.png)
 
+## Read and Receive Files
+
+Current rf and sf can operate under the ideal situation: non-lossy links. Needs to add support for retransmitted packets, and closure of the connections.
+
+```
+rf test_files/dest.txt 9999
+sf test_files/short.txt 10.0.0.1 9999
+```
+![Alt text](../md_images/tcp/non-lossy-files.png)
 ## Retransmission
 
 ## Connection teardown
@@ -41,14 +50,14 @@ r 1 4       ==> bbee
 - Established: 
 
     `cl 0` : should not be able to connect to the listen port. Retransmit the SYN packet till failure.
-    ![Alt text](./md_images/tcp/listener_close.png)
+    ![Alt text](../md_images/tcp/listener_close.png)
 
 #### Normal socket
 
  - Established: 
     On h2, `cl 0`; then on h1, `cl 1`.
-    ![Alt text](./md_images/tcp/normal_close.png)
-    ![Alt text](./md_images/tcp/image.png)
-    ![Alt text](./md_images/tcp/normal_close_wireshark.png)
+    ![Alt text](../md_images/tcp/normal_close.png)
+    ![Alt text](../md_images/tcp/image.png)
+    ![Alt text](../md_images/tcp/normal_close_wireshark.png)
 
 ## Out-of-order packets

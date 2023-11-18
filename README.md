@@ -11,6 +11,10 @@
         - One segment that is retransmitted
         - Connection teardown
 
+## Known Bugs
+
+1. Concurrency Issue: ZWP sometimes does not ack the new data when a small window change is immediately refilled. We believe this is due to the concurrency issue of SND_UNA and SND_WND. 
+
 ## Design 
 
 ### Directory Structure

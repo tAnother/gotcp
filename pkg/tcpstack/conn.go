@@ -37,7 +37,6 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		earlyArrivalQ:  PriorityQueue{},
 		inflightQ:      deque.New[*proto.TCPPacket](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
-		closeC:         make(chan struct{}, 1),
 		timeWaitReset:  make(chan bool),
 	}
 	conn.sndNxt.Store(iss)
@@ -109,8 +108,9 @@ func (conn *VTCPConn) sendBufferedData() {
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
 		conn.mu.RUnlock()
-
+		conn.mu.RLock()
 		if conn.sndWnd.Load() == 0 { // zero-window probing
+			conn.mu.RUnlock()
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
 			oldNxt := conn.sndNxt.Load()
 			newNxt := oldNxt + 1
@@ -127,7 +127,9 @@ func (conn *VTCPConn) sendBufferedData() {
 			interval := float64(1) // TODO: should be RTO
 			timeout := time.NewTimer(time.Duration(interval) * time.Second)
 			<-timeout.C
+			conn.mu.RLock()
 			for conn.sndWnd.Load() == 0 && conn.sndUna.Load() == oldUna {
+				conn.mu.RUnlock()
 				err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 				if err != nil {
 					logger.Println(err)
@@ -141,6 +143,8 @@ func (conn *VTCPConn) sendBufferedData() {
 				<-timeout.C
 			}
 		} else {
+			conn.mu.RUnlock()
+			logger.Println("try sending data...")
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
 				continue
@@ -153,7 +157,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				logger.Println(err)
 				return
 			}
-			logger.Println("Sent packet with bytes: ", string(bytesToSend))
+			// logger.Println("Sent packet with bytes: ", string(bytesToSend))
 			// conn.inflightQ.PushBack(packet)
 			// update seq number
 			conn.sndNxt.Add(uint32(numBytes))

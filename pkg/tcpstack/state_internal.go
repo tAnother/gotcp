@@ -83,7 +83,7 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 	if err != nil {
 		return err
 	}
-	logger.Printf("wrote %d bytes into recv buffer\n", n)
+	// logger.Printf("wrote %d bytes into recv buffer\n", n)
 	conn.expectedSeqNum.Add(uint32(n))
 	newWindowSize := conn.recvBuf.FreeSpace()
 	conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
@@ -145,8 +145,8 @@ func timeWaitTimer(conn *VTCPConn) {
 
 // Check if a segment is valid based on the four cases
 func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
-	logger.Printf("\nReceived TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-		segment.TcpHeader, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
+	// logger.Printf("\nReceived TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
+	// 	segment.TcpHeader, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
 
 	segLen := len(segment.Payload)
 	segSeq := segment.TcpHeader.SeqNum

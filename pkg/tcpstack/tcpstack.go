@@ -76,7 +76,6 @@ type VTCPConn struct { // represents a TCP socket
 
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool
-	closeC        chan struct{} // for closing // TODO: or also for other user input...?  Yuu: is the channel really needed?
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
