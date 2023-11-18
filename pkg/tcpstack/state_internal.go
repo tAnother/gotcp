@@ -58,8 +58,11 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 
 	//TODO : check rfc for more conditions. 3.7.10.4 Handle Ack in ESTABLISHED
 	if conn.sndUna.Load() < segAck && segAck <= conn.sndNxt.Load() {
+		// need to ensure atomicity when updating SND.UNA & SND.WND together
+		conn.mu.Lock()
 		conn.ack(segAck)
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+		conn.mu.Unlock()
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 	} else if segAck > conn.sndNxt.Load() {
@@ -183,9 +186,7 @@ func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) error {
 // Must call whenever a segment (with payload) is acked.
 func (conn *VTCPConn) ack(segAck uint32) error {
 	conn.sndUna.Store(segAck)
-	conn.sendBuf.mu.Lock()
 	conn.sendBuf.freespaceC <- struct{}{}
-	conn.sendBuf.mu.Unlock()
 	// conn.ackInflight(segAck)
 	return nil
 }

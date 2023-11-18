@@ -15,7 +15,7 @@ const BUFFER_CAPACITY = 8
 //     lbr+++++++++++++++++|--1byte--nxt               capacity
 // lbr can start at any point. The init value should be the init seq num
 
-type CircBuff struct {
+type recvBuf struct {
 	buff     []byte
 	capacity uint32
 	lbr      uint32
@@ -26,8 +26,8 @@ type CircBuff struct {
 	lock     sync.Mutex
 }
 
-func NewCircBuff(capacity uint32, start uint32) *CircBuff {
-	return &CircBuff{
+func NewRecvBuf(capacity uint32, start uint32) *recvBuf {
+	return &recvBuf{
 		buff:     make([]byte, capacity),
 		capacity: capacity,
 		lbr:      start,
@@ -37,7 +37,7 @@ func NewCircBuff(capacity uint32, start uint32) *CircBuff {
 }
 
 // Reads content on the circular buffer into the provided buffer with length len(buff)
-func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) {
+func (cb *recvBuf) Read(buf []byte) (bytesRead uint32, err error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
@@ -86,7 +86,7 @@ func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) {
 	return bytesRead, nil
 }
 
-func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error) {
+func (cb *recvBuf) Write(buf []byte) (bytesWritten uint32, err error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
@@ -142,7 +142,7 @@ func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error) {
 }
 
 // Gets the available read bytes
-func (cb *CircBuff) WindowSize() uint32 {
+func (cb *recvBuf) WindowSize() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
@@ -162,7 +162,7 @@ func (cb *CircBuff) WindowSize() uint32 {
 }
 
 // Gets the available write space
-func (cb *CircBuff) FreeSpace() uint32 {
+func (cb *recvBuf) FreeSpace() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	head := cb.lbr % cb.capacity
@@ -180,7 +180,7 @@ func (cb *CircBuff) FreeSpace() uint32 {
 	return cb.capacity - tail + head
 }
 
-func (cb *CircBuff) IsEmpty() bool {
+func (cb *recvBuf) IsEmpty() bool {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
@@ -189,14 +189,14 @@ func (cb *CircBuff) IsEmpty() bool {
 	return head == tail && !cb.isFull
 }
 
-func (cb *CircBuff) IsFull() bool {
+func (cb *recvBuf) IsFull() bool {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
 	return cb.isFull
 }
 
-func (cb *CircBuff) Bytes() []byte {
+func (cb *recvBuf) Bytes() []byte {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 
@@ -233,26 +233,26 @@ func (cb *CircBuff) Bytes() []byte {
 	return buf
 }
 
-func (cb *CircBuff) NextExpectedByte() uint32 {
+func (cb *recvBuf) NextExpectedByte() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	return cb.nxt
 }
 
-func (cb *CircBuff) LastByteRead() uint32 {
+func (cb *recvBuf) LastByteRead() uint32 {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	return cb.lbr
 }
 
-func (cb *CircBuff) AdvanceNxt(seq uint32, isFin bool) {
+func (cb *recvBuf) AdvanceNxt(seq uint32, isFin bool) {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	cb.finRecvd = isFin
 	cb.nxt = seq + 1
 }
 
-func (cb *CircBuff) SetLBR(seq uint32) {
+func (cb *recvBuf) SetLBR(seq uint32) {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	cb.lbr = seq

@@ -23,6 +23,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		socketId:       atomic.AddInt32(&t.socketNum, 1),
 		state:          state,
 		stateMu:        sync.RWMutex{},
+		mu:             sync.RWMutex{},
 		srtt:           &SRTT{}, //TODO
 		irs:            remoteInitSeqNum,
 		iss:            iss,
@@ -32,7 +33,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		expectedSeqNum: &atomic.Uint32{},
 		windowSize:     &atomic.Int32{},
 		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
-		recvBuf:        NewCircBuff(BUFFER_CAPACITY, remoteInitSeqNum),
+		recvBuf:        NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
 		earlyArrivalQ:  PriorityQueue{},
 		inflightQ:      deque.New[*proto.TCPPacket](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
@@ -100,14 +101,14 @@ func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
 	for {
 		// wait until there's new data to send
-		b.mu.Lock()
+		conn.mu.RLock()
 		for conn.numBytesNotSent() == 0 {
-			b.mu.Unlock()
+			conn.mu.RUnlock()
 			<-b.hasUnsentC
-			b.mu.Lock()
+			conn.mu.RLock()
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
-		b.mu.Unlock()
+		conn.mu.RUnlock()
 
 		if conn.sndWnd.Load() == 0 { // zero-window probing
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
@@ -115,9 +116,9 @@ func (conn *VTCPConn) sendBufferedData() {
 			newNxt := oldNxt + 1
 
 			// form the packet
-			b.mu.Lock()
+			conn.mu.RLock()
 			byteToSend := b.buf[b.index(oldNxt)]
-			b.mu.Unlock()
+			conn.mu.RUnlock()
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 				oldNxt, conn.expectedSeqNum.Load(),
 				header.TCPFlagAck, []byte{byteToSend}, uint16(conn.windowSize.Load()))

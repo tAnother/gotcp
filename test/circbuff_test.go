@@ -8,7 +8,7 @@ import (
 )
 
 func TestRingBuffer_Write_Zero(t *testing.T) {
-	rb := tcpstack.NewCircBuff(64, 0) //start at 0 pos
+	rb := tcpstack.NewRecvBuf(64, 0) //start at 0 pos
 
 	// check empty or full
 	if !rb.IsEmpty() {
@@ -105,7 +105,7 @@ func TestRingBuffer_Write_Zero(t *testing.T) {
 }
 
 func TestRingBuffer_Write_Random_Within_Range(t *testing.T) {
-	rb := tcpstack.NewCircBuff(64, 29) //start at 0 pos
+	rb := tcpstack.NewRecvBuf(64, 29) //start at 0 pos
 
 	//check ptr
 	if rb.LastByteRead() != 29 {
@@ -208,7 +208,7 @@ func TestRingBuffer_Write_Random_Within_Range(t *testing.T) {
 }
 
 func TestRingBuffer_Write_Random_Out_Range(t *testing.T) {
-	rb := tcpstack.NewCircBuff(64, 2031) //start at 0 pos
+	rb := tcpstack.NewRecvBuf(64, 2031) //start at 0 pos
 
 	//check ptr
 	if rb.LastByteRead() != 2031 {
@@ -312,7 +312,7 @@ func TestRingBuffer_Write_Random_Out_Range(t *testing.T) {
 
 func TestRingBuffer_Read(t *testing.T) {
 	start := uint32(2031)
-	rb := tcpstack.NewCircBuff(64, start)
+	rb := tcpstack.NewRecvBuf(64, start)
 
 	//check ptr
 	if rb.LastByteRead() != start {
@@ -374,7 +374,7 @@ func TestRingBuffer_Read(t *testing.T) {
 	}
 
 	//read partial
-	rb = tcpstack.NewCircBuff(64, start)
+	rb = tcpstack.NewRecvBuf(64, start)
 	buf = make([]byte, 4)
 	rb.Write([]byte(strings.Repeat("abcd", 4)))
 	n, err = rb.Read(buf)

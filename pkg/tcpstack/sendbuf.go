@@ -36,7 +36,7 @@ func (b *sendBuf) index(num uint32) uint {
 }
 
 // Space left in the buffer.
-// The buffer should be locked on entry.
+// conn.mu should be locked on entry.
 func (conn *VTCPConn) sendBufFreeSpace() uint {
 	if uint(conn.sendBuf.lbw-conn.sndUna.Load()) <= conn.sendBuf.capacity {
 		return conn.sendBuf.capacity - uint(conn.sendBuf.lbw-conn.sndUna.Load())
@@ -45,16 +45,16 @@ func (conn *VTCPConn) sendBufFreeSpace() uint {
 }
 
 // Number of bytes in the buffer that's not yet sent to the receiver.
-// The buffer should be locked on entry.
+// conn.mu should be locked on entry.
 func (conn *VTCPConn) numBytesNotSent() uint32 {
 	return conn.sendBuf.lbw - conn.sndNxt.Load()
 }
 
-// Current max length to send to the receiver,
-// i.e., the offered window less the amount of data sent but
-// not acknowledged. [SND.NXT, SND.NXT+usable window] represents
-// the sequence numbers that the remote (receiving) TCP endpoint
-// is willing to receive.
+// Current max length to send to the receiver, i.e., the
+// offered window less the amount of data sent but not acknowledged.
+// [SND.NXT, SND.NXT+usable window] represents the sequence numbers
+// that the remote (receiving) TCP endpoint is willing to receive.
+// conn.mu should be locked on entry.
 func (conn *VTCPConn) usableSendWindow() uint32 {
 	if conn.sndUna.Load()+uint32(conn.sndWnd.Load()) > conn.sndNxt.Load() {
 		return conn.sndUna.Load() + uint32(conn.sndWnd.Load()) - conn.sndNxt.Load()
@@ -66,13 +66,13 @@ func (conn *VTCPConn) usableSendWindow() uint32 {
 // If the buffer is full, block until there is room to write data.
 func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 	b := conn.sendBuf
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
 
 	for conn.sendBufFreeSpace() == 0 {
-		b.mu.Unlock()
+		conn.mu.Unlock()
 		<-b.freespaceC
-		b.mu.Lock()
+		conn.mu.Lock()
 	}
 	b.freespaceC = make(chan struct{}, b.capacity)
 
@@ -93,12 +93,11 @@ func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 }
 
 // Return the segment corresponding to seqNum. Use for retransmission
+// The owner's lock should be held on entry.
 func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 	if length == 0 {
 		return nil
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	start := b.index(seqNum)
 	end := b.index(seqNum + uint32(length))
@@ -117,14 +116,14 @@ func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 // If there are no bytes to send, block until there are.
 func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	b := conn.sendBuf
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
 
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
 	if numBytes == 0 {
-		// TODO: this is mainly used when usable send window = 0, where we need to stop sending new data
+		// TODO: This is mainly used when usable send window = 0, where we need to stop sending new data
 		// while keep retransmitting buf[SND.UNA, SND.UNA + SND.WND)
-		// it can cause spin wait especially when SND.NXT & SND.WND both exceed SND.UNA too much
+		// It can cause spin wait especially when SND.NXT & SND.WND both exceed SND.UNA too much
 		// (probably when an early segment gets dropped?)
 		// but blocking until usable send window becomes >0 would require observing SND.UNA & SND.WND
 		return 0, nil
