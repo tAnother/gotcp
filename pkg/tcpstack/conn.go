@@ -38,11 +38,11 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
 
-		inflightMu:    sync.RWMutex{},
-		retransTicker: time.NewTicker(MIN_RTO),
-		RTO:           1000, // before a RTT is measured, set RTO to 1 second = 1000 ms
-		firstRTT:      &atomic.Bool{},
-		RTOStatus:     &atomic.Bool{},
+		inflightMu: sync.RWMutex{},
+		// retransTimer: time.NewTimer(MIN_RTO), // should not start yet
+		RTO:       1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
+		firstRTT:  &atomic.Bool{},
+		RTOStatus: &atomic.Bool{},
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
@@ -163,8 +163,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				return
 			}
 			// logger.Println("Sent packet with bytes: ", string(bytesToSend))
-			// conn.inflightQ.PushBack(packet)
-			// update seq number
+			conn.inflightQ.PushBack(&packetMetadata{packet: packet, timeSent: time.Now(), counter: 0})
 			conn.sndNxt.Add(uint32(numBytes))
 		}
 	}
