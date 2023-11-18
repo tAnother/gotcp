@@ -18,13 +18,13 @@ import (
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:              t,
-		TCPEndpointID:  endpoint,
-		socketId:       atomic.AddInt32(&t.socketNum, 1),
-		state:          state,
-		stateMu:        sync.RWMutex{},
-		mu:             sync.RWMutex{},
-		srtt:           &SRTT{}, //TODO
+		t:             t,
+		TCPEndpointID: endpoint,
+		socketId:      atomic.AddInt32(&t.socketNum, 1),
+		state:         state,
+		stateMu:       sync.RWMutex{},
+		mu:            sync.RWMutex{},
+		// srtt:           &SRTT{}, //TODO
 		irs:            remoteInitSeqNum,
 		iss:            iss,
 		sndNxt:         &atomic.Uint32{},
@@ -35,7 +35,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
 		recvBuf:        NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
 		earlyArrivalQ:  PriorityQueue{},
-		inflightQ:      deque.New[*proto.TCPPacket](),
+		inflightQ:      deque.New[*packetMetadata](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
 	}
@@ -107,10 +107,9 @@ func (conn *VTCPConn) sendBufferedData() {
 			conn.mu.RLock()
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
-		conn.mu.RUnlock()
-		conn.mu.RLock()
+		conn.mu.RUnlock() // TODO: might need to use wlock cuz hasUnsentC is touched - or maybe just switch to sync.Cond orz
+
 		if conn.sndWnd.Load() == 0 { // zero-window probing
-			conn.mu.RUnlock()
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
 			oldNxt := conn.sndNxt.Load()
 			newNxt := oldNxt + 1
@@ -143,7 +142,6 @@ func (conn *VTCPConn) sendBufferedData() {
 				<-timeout.C
 			}
 		} else {
-			conn.mu.RUnlock()
 			logger.Println("try sending data...")
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
