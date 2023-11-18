@@ -102,6 +102,17 @@ func (conn *VTCPConn) run() {
 	}
 }
 
+// A wrapper around tcpstack.send() for packet containing data.
+// Use conn.sendCTL() instead for packet without data,
+func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
+	err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+	if !conn.RTOStatus.Load() {
+		conn.retransTimer = time.NewTimer(conn.getRTODuration())
+		go conn.startRetransmission()
+	}
+	return err
+}
+
 // Send out new data in the send buffer
 func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
@@ -157,7 +168,7 @@ func (conn *VTCPConn) sendBufferedData() {
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 				header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-			err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			err := conn.send(packet)
 			if err != nil {
 				logger.Println(err)
 				return

@@ -92,7 +92,7 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 	newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 		conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 		header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
-	err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+	err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr) // TODO: should these just call sendCTL() instead?
 	if err != nil {
 		return err
 	}

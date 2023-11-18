@@ -24,15 +24,17 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 	}
 }
 
-// Should be called when the retransmission timer got "switched on"
+// Should be called only when the retransmission timer got "switched on"
 func (conn *VTCPConn) startRetransmission() {
 	// TODO: lock. Also when returning from the function, should we stop the timer?
-	for conn.inflightQ.Len() > 0 && !conn.RTOStatus.Load() {
+	for conn.inflightQ.Len() > 0 && conn.RTOStatus.Load() {
 		<-conn.retransTimer.C
 		conn.retransmit()
 		conn.RTO = min(conn.RTO*2, MAX_RTO)
 		conn.retransTimer.Reset(conn.getRTODuration())
 	}
+	conn.retransTimer.Stop()
+	conn.RTOStatus.Store(false)
 }
 
 // Resend the first packet on the queue
@@ -42,7 +44,7 @@ func (conn *VTCPConn) retransmit() error {
 		return errors.New("maximum number of retransmissions reached")
 		// TODO: call active close???
 	}
-	err := send(conn.t, inflight.packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+	err := conn.send(inflight.packet)
 	if err != nil {
 		return err
 	}
