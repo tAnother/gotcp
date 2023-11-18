@@ -6,7 +6,8 @@ import (
 	"sync"
 )
 
-const BUFFER_CAPACITY = 1<<16 - 1
+// const BUFFER_CAPACITY = 1<<16 - 1
+const BUFFER_CAPACITY = 8
 
 // We take this MIT licensed package as an example: https://github.com/smallnest/ringbuffer/blob/master/ring_buffer.go
 

@@ -114,32 +114,10 @@ func (conn *VTCPConn) send() {
 			logger.Println(err)
 			return
 		}
-		// logger.Println("Sent packet with bytes: ", string(bytesToSend))
+		logger.Println("Sent packet with bytes: ", string(bytesToSend))
 		// conn.inflightQ.PushBack(packet)
 		// update seq number
 		conn.sndNxt.Add(uint32(numBytes))
-	}
-}
-
-// Mark sequences up to ackNum as acked
-func (conn *VTCPConn) ack(ackNum uint32) error {
-	if conn.sndUna.Load() < ackNum {
-		conn.sndUna.Store(ackNum)
-		conn.sendBuf.mu.Lock()
-		conn.sendBuf.freespaceC <- struct{}{}
-		conn.sendBuf.mu.Unlock()
-		// conn.ackInflight(ackNum)
-	}
-	return nil
-}
-
-func (conn *VTCPConn) ackInflight(ackNum uint32) {
-	for conn.inflightQ.Len() > 0 {
-		packet := conn.inflightQ.Front()
-		if packet.TcpHeader.SeqNum >= ackNum { // TODO: this doesn't account for the situation when only a portion of the packet was acked
-			return
-		}
-		conn.inflightQ.PopFront()
 	}
 }
 
@@ -159,9 +137,9 @@ func (conn *VTCPConn) zeroWindowProbe() {
 			logger.Println(err)
 			return
 		}
-		// logger.Println("Sent zwp packet with byte: ", string(bytesToSend))
+		logger.Println("Sent zwp packet with byte: ", string(bytesToSend))
 
-		interval *= 1.2 // TODO: determine the factor
+		interval *= 1.1 // TODO: determine the factor
 		timeout.Reset(time.Duration(interval) * time.Second)
 	}
 	if conn.sndUna.Load() > conn.sndNxt.Load() {

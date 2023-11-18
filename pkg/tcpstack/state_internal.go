@@ -12,13 +12,12 @@ import (
 
 // 3.10.7.4 Other states when segment arrives. It returns aggregated data to write, and aggregated seg length
 func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error) {
-
 	if !isValidSeg(segment, conn) {
-		err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
-		if err != nil {
-			return make([]byte, 0), 0, err
+		err := fmt.Errorf("received an unacceptable packet. Send ACK and dropped the packet")
+		e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		if e != nil {
+			return make([]byte, 0), 0, fmt.Errorf("%v err\n. sendCTL error: %v", err, e)
 		}
-		err = fmt.Errorf("Received an unacceptable packet. Sent ACK and dropped the packet.")
 		return make([]byte, 0), 0, err
 	}
 
@@ -46,32 +45,31 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 // Preprocess ACK bit
 func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 	segAck := segment.TcpHeader.AckNum
-	if conn.sndUna.Load()-uint32(conn.sendBufFreeSpace()) > segAck || conn.sndNxt.Load() < segAck {
-		err = fmt.Errorf("Invalid ACK num. Sending ACK and dropping the packet...")
+	if conn.sndUna.Load()-uint32(BUFFER_CAPACITY) > segAck || // BUFFER_CAPACITY being the hardcoded MAX.SND.WND
+		conn.sndNxt.Load() < segAck {
 		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
 		if err != nil {
-			return err
+			logger.Println(err)
 		}
+		return fmt.Errorf("invalid ACK num. Packet dropped")
 	}
+
 	//TODO : check rfc for more conditions. 3.7.10.4 Handle Ack in ESTABLISHED
-	if segAck > conn.sndUna.Load() && conn.sndNxt.Load() >= segAck {
-		conn.sndUna.Store(segAck)
+	if conn.sndUna.Load() < segAck && segAck <= conn.sndNxt.Load() {
 		conn.ack(segAck)
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
-
-		// TODO : can be ignored. What does it mean? do we still need to check dup ack?
-		// } else if conn.sndUna.Load() >= segAck {
-		// 	err = fmt.Errorf("Dup Acks. Ignoring the packet... ")
+	} else if conn.sndUna.Load() == segAck {
+		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 	} else if segAck > conn.sndNxt.Load() {
 		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
-		err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
-		if err != nil {
-			return err
+		err = fmt.Errorf("acking something not yet sent. Packet dropped")
+		e := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
+		if e != nil {
+			err = fmt.Errorf("%v\n send error: %v", err, e)
 		}
-		err = fmt.Errorf("Acks something not yet sent. Dropping the packet...")
 	}
 	return err
 }
@@ -149,7 +147,7 @@ func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
 	rcvWnd := conn.windowSize.Load()
 	rcvNxt := conn.expectedSeqNum.Load()
 
-	if segLen == 0 && rcvWnd > 0 {
+	if segLen == 0 && rcvWnd == 0 {
 		return segSeq == rcvNxt
 	}
 
@@ -158,11 +156,14 @@ func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
 	}
 
 	if segLen > 0 && rcvWnd == 0 {
+		// treat as zero-window probing
 		return false
 	}
 
+	// check if seg seq is partially inside our recv window
 	cond1 := segSeq >= rcvNxt && segSeq < rcvNxt+uint32(rcvWnd)
 	cond2 := segSeq+uint32(segLen)-1 >= rcvNxt && segSeq+uint32(segLen)-1 < rcvNxt+uint32(rcvWnd)
+	logger.Println("cond1:", cond1, " cond2: ", cond2)
 	return cond1 || cond2
 }
 
@@ -174,4 +175,25 @@ func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) error {
 		return err
 	}
 	return nil
+}
+
+// Mark sequences up to ackNum as acked, notify send buffer, clear inflight queue.
+// Must call whenever a segment (with payload) is acked.
+func (conn *VTCPConn) ack(segAck uint32) error {
+	conn.sndUna.Store(segAck)
+	conn.sendBuf.mu.Lock()
+	conn.sendBuf.freespaceC <- struct{}{}
+	conn.sendBuf.mu.Unlock()
+	// conn.ackInflight(segAck)
+	return nil
+}
+
+func (conn *VTCPConn) ackInflight(ackNum uint32) {
+	for conn.inflightQ.Len() > 0 {
+		packet := conn.inflightQ.Front()
+		if packet.TcpHeader.SeqNum >= ackNum { // TODO: this doesn't account for the situation when only a portion of the packet was acked
+			return
+		}
+		conn.inflightQ.PopFront()
+	}
 }
