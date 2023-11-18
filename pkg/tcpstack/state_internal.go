@@ -187,16 +187,6 @@ func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) error {
 func (conn *VTCPConn) ack(segAck uint32) error {
 	conn.sndUna.Store(segAck)
 	conn.sendBuf.freespaceC <- struct{}{}
-	// conn.ackInflight(segAck)
+	conn.ackInflight(segAck)
 	return nil
-}
-
-func (conn *VTCPConn) ackInflight(ackNum uint32) {
-	for conn.inflightQ.Len() > 0 {
-		packet := conn.inflightQ.Front()
-		if packet.TcpHeader.SeqNum >= ackNum { // TODO: this doesn't account for the situation when only a portion of the packet was acked
-			return
-		}
-		conn.inflightQ.PopFront()
-	}
 }

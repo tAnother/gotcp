@@ -57,9 +57,6 @@ type VTCPConn struct { // represents a TCP socket
 
 	state   State
 	stateMu sync.RWMutex // for protecting access to state
-	mu      sync.RWMutex // for protecting access to send/recv related fields
-
-	srtt *SRTT
 
 	iss            uint32         // initial send sequence number (unsafe - should stay unchanged once initialized)
 	irs            uint32         // initial receive sequence number (unsafe - should stay unchanged once connection established)
@@ -68,11 +65,17 @@ type VTCPConn struct { // represents a TCP socket
 	sndWnd         *atomic.Int32  // SND.WND - the other side's window size
 	expectedSeqNum *atomic.Uint32 // RCV.NXT- the ACK num we should send to the other side
 	windowSize     *atomic.Int32  // RCV.WND - range 0 ~ 65535
+	mu             sync.RWMutex   // for protecting access to send/recv related fields
 
 	sendBuf       *sendBuf
 	recvBuf       *recvBuf
 	earlyArrivalQ PriorityQueue
-	inflightQ     *deque.Deque[*proto.TCPPacket]
+
+	inflightQ *deque.Deque[*packetMetadata] // for retransmission
+	srtt      float64
+	rto       float64
+	firstRTT  *atomic.Bool
+	rtoStatus *atomic.Bool
 
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool

@@ -18,13 +18,13 @@ import (
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:              t,
-		TCPEndpointID:  endpoint,
-		socketId:       atomic.AddInt32(&t.socketNum, 1),
-		state:          state,
-		stateMu:        sync.RWMutex{},
-		mu:             sync.RWMutex{},
-		srtt:           &SRTT{}, //TODO
+		t:             t,
+		TCPEndpointID: endpoint,
+		socketId:      atomic.AddInt32(&t.socketNum, 1),
+		state:         state,
+		stateMu:       sync.RWMutex{},
+		mu:            sync.RWMutex{},
+		// srtt:           &SRTT{}, //TODO
 		irs:            remoteInitSeqNum,
 		iss:            iss,
 		sndNxt:         &atomic.Uint32{},
@@ -35,7 +35,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
 		recvBuf:        NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
 		earlyArrivalQ:  PriorityQueue{},
-		inflightQ:      deque.New[*proto.TCPPacket](),
+		inflightQ:      deque.New[*packetMetadata](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		closeC:         make(chan struct{}, 1),
 		timeWaitReset:  make(chan bool),
