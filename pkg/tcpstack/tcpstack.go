@@ -75,8 +75,8 @@ type VTCPConn struct { // represents a TCP socket
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool
 
-	inflightQ     *deque.Deque[*proto.TCPPacket] //retransmission queue
-	inflightMu    sync.RWMutex                   // for protecting access to inFlightQ
+	inflightQ     *deque.Deque[*packetMetadata] //retransmission queue
+	inflightMu    sync.RWMutex                  // for protecting access to inFlightQ
 	retransTicker *time.Ticker
 	RTO           float64      // Retransmission Timeout
 	firstRTT      *atomic.Bool // if this is the first measurement of RTO
