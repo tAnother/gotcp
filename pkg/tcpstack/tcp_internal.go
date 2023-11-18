@@ -81,17 +81,17 @@ func send(t *TCPGlobalInfo, p *proto.TCPPacket, srcIP netip.Addr, destIP netip.A
 // RFC 793
 func (conn *VTCPConn) computeRTT(r float64) {
 	if conn.firstRTT.Load() {
-		conn.SRTT = r
+		conn.sRTT = r
 		conn.firstRTT.Store(false)
 	} else {
-		conn.SRTT = (ALPHA * conn.SRTT) + (1-ALPHA)*r
+		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
 	}
-	conn.RTO = max(MIN_RTO, min(BETA*conn.SRTT, MAX_RTO))
+	conn.rto = max(MIN_RTO, min(BETA*conn.sRTT, MAX_RTO))
 }
 
-// Computes RTO duration for the ticker
-// This should be called whenever starting or reseting the retrans ticker
+// Set the timer status to be running and computes RTO duration for the timer.
+// This should be called whenever starting or reseting the retrans timer
 func (conn *VTCPConn) getRTODuration() time.Duration {
-	conn.RTOStatus.Store(true)
-	return time.Duration(conn.RTO * float64(time.Millisecond))
+	conn.rtoIsRunning.Store(true)
+	return time.Duration(conn.rto * float64(time.Millisecond))
 }

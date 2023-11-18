@@ -38,11 +38,11 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
 
-		inflightMu: sync.RWMutex{},
-		// retransTimer: time.NewTimer(MIN_RTO), // should not start yet
-		RTO:       1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
-		firstRTT:  &atomic.Bool{},
-		RTOStatus: &atomic.Bool{},
+		rtoMu:        sync.RWMutex{},
+		retransTimer: time.NewTimer(MIN_RTO), // should not start yet
+		rto:          1000,                   // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
+		firstRTT:     &atomic.Bool{},
+		rtoIsRunning: &atomic.Bool{},
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
@@ -50,7 +50,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
 	conn.firstRTT.Store(true)
-	conn.RTOStatus.Store(false)
+	conn.rtoIsRunning.Store(false)
 	return conn
 }
 
@@ -106,8 +106,11 @@ func (conn *VTCPConn) run() {
 // Use conn.sendCTL() instead for packet without data,
 func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
 	err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-	if !conn.RTOStatus.Load() {
-		conn.retransTimer = time.NewTimer(conn.getRTODuration())
+	if !conn.rtoIsRunning.Load() {
+		if !conn.retransTimer.Stop() {
+			<-conn.retransTimer.C
+		}
+		conn.retransTimer.Reset(conn.getRTODuration())
 		go conn.startRetransmission()
 	}
 	return err

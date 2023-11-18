@@ -62,9 +62,14 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		conn.mu.Lock()
 		conn.sndUna.Store(segAck)
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
-		conn.ackInflight(segAck)
 		conn.sendBuf.freespaceC <- struct{}{}
 		conn.mu.Unlock()
+		conn.ackInflight(segAck)
+		if !conn.retransTimer.Stop() {
+			<-conn.retransTimer.C
+		}
+		conn.retransTimer.Reset(conn.getRTODuration())
+
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 	} else if segAck > conn.sndNxt.Load() {

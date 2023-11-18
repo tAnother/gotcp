@@ -1,7 +1,6 @@
 package tcpstack
 
 import (
-	"errors"
 	"iptcp-nora-yu/pkg/proto"
 	"time"
 )
@@ -19,6 +18,7 @@ type packetMetadata struct {
 }
 
 func (conn *VTCPConn) ackInflight(ackNum uint32) {
+	// TODO: lock!!
 	for conn.inflightQ.Len() > 0 {
 		meta := conn.inflightQ.Front()
 		if meta.packet.TcpHeader.SeqNum >= ackNum {
@@ -30,32 +30,36 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 
 // Should be called only when the retransmission timer got "switched on"
 func (conn *VTCPConn) startRetransmission() {
-	// TODO: lock. Also when returning from the function, should we stop the timer?
-	defer conn.RTOStatus.Store(false)
-	defer conn.retransTimer.Stop()
-	for conn.inflightQ.Len() > 0 && conn.RTOStatus.Load() {
+	// TODO: lock!!
+	defer func() {
+		conn.rtoIsRunning.Store(false)
+		if !conn.retransTimer.Stop() {
+			<-conn.retransTimer.C
+		}
+	}()
+
+	for conn.inflightQ.Len() > 0 && conn.rtoIsRunning.Load() {
 		<-conn.retransTimer.C
-		err := conn.retransmit()
-		if err != nil {
+
+		// get the first packet on the queue
+		inflight := conn.inflightQ.Front()
+		if inflight.counter >= MAX_RETRANSMISSIONS {
+			conn.inflightQ.Clear()
 			go conn.activeClose() // should i ???
 			return
 		}
-		conn.RTO = min(conn.RTO*2, MAX_RTO)
-		conn.retransTimer.Reset(conn.getRTODuration())
-	}
-}
 
-// Resend the first packet on the queue
-func (conn *VTCPConn) retransmit() error {
-	inflight := conn.inflightQ.Front()
-	if inflight.counter >= MAX_RETRANSMISSIONS {
-		return errors.New("maximum number of retransmissions reached")
+		// update rto and restart the timer
+		conn.rto = min(conn.rto*2, MAX_RTO)
+		conn.retransTimer.Reset(conn.getRTODuration())
+
+		err := conn.send(inflight.packet)
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		inflight.timeSent = time.Now()
+		inflight.counter++
+		logger.Printf("Retransmitting packet SEQ = %d (%d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
 	}
-	err := conn.send(inflight.packet)
-	if err != nil {
-		return err
-	}
-	inflight.timeSent = time.Now()
-	inflight.counter++
-	return nil
 }
