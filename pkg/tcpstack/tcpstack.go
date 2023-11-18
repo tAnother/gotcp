@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/proto"
+	"time"
 
 	"log"
 	"net/netip"
@@ -59,7 +60,7 @@ type VTCPConn struct { // represents a TCP socket
 	stateMu sync.RWMutex // for protecting access to state
 	mu      sync.RWMutex // for protecting access to send/recv related fields
 
-	srtt *SRTT
+	// srtt *SRTT
 
 	iss            uint32         // initial send sequence number (unsafe - should stay unchanged once initialized)
 	irs            uint32         // initial receive sequence number (unsafe - should stay unchanged once connection established)
@@ -72,10 +73,17 @@ type VTCPConn struct { // represents a TCP socket
 	sendBuf       *sendBuf
 	recvBuf       *recvBuf
 	earlyArrivalQ PriorityQueue
-	inflightQ     *deque.Deque[*proto.TCPPacket]
 
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool
+
+	inflightQ     *deque.Deque[*proto.TCPPacket] //retransmission queue
+	inflightMu    sync.RWMutex                   // for protecting access to inFlightQ
+	retransTicker *time.Ticker
+	RTO           float64      // Retransmission Timeout
+	firstRTT      *atomic.Bool // if this is the first measurement of RTO
+	SRTT          float64      // Smooth Round Trip Time
+	RTOStatus     *atomic.Bool // if RTO is running (6298 - 5.1)
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {

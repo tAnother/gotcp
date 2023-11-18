@@ -24,7 +24,6 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		state:          state,
 		stateMu:        sync.RWMutex{},
 		mu:             sync.RWMutex{},
-		srtt:           &SRTT{}, //TODO
 		irs:            remoteInitSeqNum,
 		iss:            iss,
 		sndNxt:         &atomic.Uint32{},
@@ -38,12 +37,20 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		inflightQ:      deque.New[*proto.TCPPacket](),
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
+
+		inflightMu:    sync.RWMutex{},
+		retransTicker: time.NewTicker(MIN_RTO),
+		RTO:           1000, // before a RTT is measured, set RTO to 1 second = 1000 ms
+		firstRTT:      &atomic.Bool{},
+		RTOStatus:     &atomic.Bool{},
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
+	conn.firstRTT.Store(true)
+	conn.RTOStatus.Store(false)
 	return conn
 }
 
