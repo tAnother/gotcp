@@ -84,7 +84,7 @@ func send(t *TCPGlobalInfo, p *proto.TCPPacket, srcIP netip.Addr, destIP netip.A
 func (conn *VTCPConn) aggregateEarlyArrivals(data []byte, startSeq uint32) ([]byte, int) {
 	avaiWnd := conn.windowSize.Load() - int32(len(data))
 	if avaiWnd == 0 {
-		return data, 0
+		return data, len(data)
 	}
 
 	for conn.earlyArrivalQ.Len() != 0 {
@@ -105,7 +105,13 @@ func (conn *VTCPConn) aggregateEarlyArrivals(data []byte, startSeq uint32) ([]by
 
 		// at this point, segSeq <= startSeq <= segEnd. It may partially fit
 		// trim the data
-		trim := seg.Payload[max(segSeq, startSeq) : min(segEnd, startSeq+uint32(avaiWnd))+1]
+		start := uint32(0)
+		end := min(int32(len(seg.Payload)), avaiWnd)
+		if segSeq < startSeq {
+			start = startSeq - segSeq
+		}
+
+		trim := seg.Payload[start:end]
 		avaiWnd -= int32(len(trim))
 		startSeq += uint32(len(trim))
 		data = append(data, trim...)

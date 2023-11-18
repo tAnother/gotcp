@@ -39,7 +39,13 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 	aggData := segment.Payload
 
 	// Trim off any data of this segment that lies outside the window (before and after)
-	aggData = aggData[max(segSeq, rcvNxt) : min(segSeq+uint32(aggSeqLen), rcvNxt+uint32(rcvWnd))+1]
+	start := uint32(0)
+	end := min(int32(aggSeqLen), rcvWnd)
+	if segSeq < rcvNxt {
+		start = rcvNxt - segSeq
+	}
+
+	aggData = aggData[start:end]
 
 	//Aggregate Early Arrivals. This returns fittable aggregated data.
 	aggData, aggSeqLen = conn.aggregateEarlyArrivals(aggData, segSeq+uint32(len(aggData)))
