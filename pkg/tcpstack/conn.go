@@ -123,8 +123,10 @@ func (conn *VTCPConn) send() {
 
 func (conn *VTCPConn) zeroWindowProbe() {
 	_, bytesToSend := conn.bytesNotSent(1, true)
+	oldSndNxt := conn.sndNxt.Load()
+	newSndNxt := oldSndNxt + 1
 	packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-		conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
+		oldSndNxt, conn.expectedSeqNum.Load(),
 		header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
 
 	interval := float64(1) // TODO: should be RTO
@@ -137,12 +139,10 @@ func (conn *VTCPConn) zeroWindowProbe() {
 			logger.Println(err)
 			return
 		}
+		conn.sndNxt.Store(newSndNxt)
 		logger.Println("Sent zwp packet with byte: ", string(bytesToSend))
 
 		interval *= 1.1 // TODO: determine the factor
 		timeout.Reset(time.Duration(interval) * time.Second)
-	}
-	if conn.sndUna.Load() > conn.sndNxt.Load() {
-		conn.sndNxt.Add(1) // increment only after this one byte is acked - UNSAFE? what if nxt wraps around?
 	}
 }
