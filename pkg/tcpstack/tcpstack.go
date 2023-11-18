@@ -56,7 +56,8 @@ type VTCPConn struct { // represents a TCP socket
 	socketId int32
 
 	state   State
-	stateMu sync.RWMutex
+	stateMu sync.RWMutex // for protecting access to state
+	mu      sync.RWMutex // for protecting access to send/recv related fields
 
 	srtt *SRTT
 
@@ -69,13 +70,13 @@ type VTCPConn struct { // represents a TCP socket
 	windowSize     *atomic.Int32  // RCV.WND - range 0 ~ 65535
 
 	sendBuf       *sendBuf
-	recvBuf       *CircBuff
+	recvBuf       *recvBuf
 	earlyArrivalQ PriorityQueue
 	inflightQ     *deque.Deque[*proto.TCPPacket]
 
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool
-	closeC        chan struct{} // for closing // TODO: or also for other user input...?
+	closeC        chan struct{} // for closing // TODO: or also for other user input...?  Yuu: is the channel really needed?
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
@@ -158,8 +159,6 @@ func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
 		// unmarshal and validate the packet
 		tcpPacket := new(proto.TCPPacket)
 		tcpPacket.Unmarshal(ipPacket.Payload[:ipPacket.Header.TotalLen-ipPacket.Header.Len])
-		// logger.Printf("\nReceived TCP packet from %s\tIP Header:  %v\tTCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-		// 	ipPacket.Header.Src, ipPacket.Header, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
 
 		if !proto.ValidTCPChecksum(tcpPacket, ipPacket.Header.Src, ipPacket.Header.Dst) {
 			logger.Printf("packet dropped because checksum validation failed\n")
