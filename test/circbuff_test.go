@@ -7,6 +7,87 @@ import (
 	"testing"
 )
 
+func TestRecvBufferOveflow(t *testing.T) {
+	rb := tcpstack.NewRecvBuf(12, 0) //start at 0 pos
+
+	// check empty or full
+	if !rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is true but got false")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
+	if rb.WindowSize() != 0 {
+		t.Fatalf("expect len 0 bytes but got %d. r.lbr=%d, r.nxt=%d", rb.WindowSize(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if rb.FreeSpace() != 12 {
+		t.Fatalf("expect free 12 bytes but got %d. r.w=%d, r.nxt=%d", rb.FreeSpace(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+
+	// write 2 * 4 = 8 bytes
+	n, err := rb.Write([]byte(strings.Repeat("abcd", 2)))
+	if err != nil {
+		t.Fatalf("should write: %v", err)
+	}
+	if n != 8 {
+		t.Fatalf("expect write 8 bytes but got %d", n)
+	}
+	if rb.WindowSize() != 8 {
+		t.Fatalf("expect len 8 bytes but got %d. r.lbr=%d, r.nxt=%d", rb.WindowSize(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if rb.FreeSpace() != 4 {
+		t.Fatalf("expect free 4 bytes but got %d. r.w=%d, r.r=%d", rb.FreeSpace(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if !bytes.Equal(rb.Bytes(), []byte(strings.Repeat("abcd", 2))) {
+		t.Fatalf("expect 2 abcd but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+
+	// write 4 * 4 = 16 bytes
+	n, err = rb.Write([]byte(strings.Repeat("abcd", 4)))
+	if err == nil {
+		t.Fatalf("should not write due to overflow but wrote %v", n)
+	}
+
+	rb = tcpstack.NewRecvBuf(12, 17) //start at random pos
+
+	// check empty or full
+	if !rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is true but got false")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
+	if rb.WindowSize() != 0 {
+		t.Fatalf("expect len 0 bytes but got %d. r.lbr=%d, r.nxt=%d", rb.WindowSize(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if rb.FreeSpace() != 12 {
+		t.Fatalf("expect free 12 bytes but got %d. r.w=%d, r.nxt=%d", rb.FreeSpace(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+
+	// write 2 * 4 = 8 bytes
+	n, err = rb.Write([]byte(strings.Repeat("abcd", 2)))
+	if err != nil {
+		t.Fatalf("should write: %v", err)
+	}
+	if n != 8 {
+		t.Fatalf("expect write 8 bytes but got %d", n)
+	}
+	if rb.WindowSize() != 8 {
+		t.Fatalf("expect len 8 bytes but got %d. r.lbr=%d, r.nxt=%d", rb.WindowSize(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if rb.FreeSpace() != 4 {
+		t.Fatalf("expect free 4 bytes but got %d. r.w=%d, r.r=%d", rb.FreeSpace(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	if !bytes.Equal(rb.Bytes(), []byte(strings.Repeat("abcd", 2))) {
+		t.Fatalf("expect 2 abcd but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.LastByteRead(), rb.NextExpectedByte())
+	}
+	// write 4 * 4 = 16 bytes
+	n, err = rb.Write([]byte(strings.Repeat("abcd", 4)))
+	if err == nil {
+		t.Fatalf("should not write due to overflow but wrote %v", n)
+	}
+}
+
 func TestRingBuffer_Write_Zero(t *testing.T) {
 	rb := tcpstack.NewRecvBuf(64, 0) //start at 0 pos
 

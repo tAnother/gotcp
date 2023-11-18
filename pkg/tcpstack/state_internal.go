@@ -35,10 +35,14 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 	}
 
 	aggSeqLen := len(segment.Payload)
+	rcvWnd := conn.windowSize.Load()
 	aggData := segment.Payload
-	// Trimming is done in Recv Buff
 
-	// TODO : Aggregate Early Arrivals
+	// Trim off any data of this segment that lies outside the window (before and after)
+	aggData = aggData[max(segSeq, rcvNxt) : min(segSeq+uint32(aggSeqLen), rcvNxt+uint32(rcvWnd))+1]
+
+	//Aggregate Early Arrivals. This returns fittable aggregated data.
+	aggData, aggSeqLen = conn.aggregateEarlyArrivals(aggData, segSeq+uint32(len(aggData)))
 
 	return aggData, aggSeqLen, nil
 }
@@ -147,9 +151,6 @@ func timeWaitTimer(conn *VTCPConn) {
 
 // Check if a segment is valid based on the four cases
 func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
-	// logger.Printf("\nReceived TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-	// 	segment.TcpHeader, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
-
 	segLen := len(segment.Payload)
 	segSeq := segment.TcpHeader.SeqNum
 	rcvWnd := conn.windowSize.Load()
