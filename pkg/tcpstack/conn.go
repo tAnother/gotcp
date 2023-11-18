@@ -80,7 +80,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 			return bytesWritten, errors.New("trying to write to a closing connection")
 		}
 		conn.stateMu.RUnlock()
-		w := conn.write(data[bytesWritten:])
+		w := conn.writeToSendBuf(data[bytesWritten:])
 		bytesWritten += w
 	}
 	return bytesWritten, nil
@@ -96,53 +96,66 @@ func (conn *VTCPConn) run() {
 }
 
 // Send out new data in the send buffer
-// TODO: should only run in established state?
-func (conn *VTCPConn) send() {
+func (conn *VTCPConn) sendBufferedData() {
+	b := conn.sendBuf
 	for {
-		if conn.sndWnd.Load() == 0 {
-			conn.zeroWindowProbe()
+		// wait until there's new data to send
+		b.mu.Lock()
+		for conn.numBytesNotSent() == 0 {
+			b.mu.Unlock()
+			<-b.hasUnsentC
+			b.mu.Lock()
 		}
-		numBytes, bytesToSend := conn.bytesNotSent(proto.MSS, false) // could block
-		if numBytes == 0 {
-			continue
+		b.hasUnsentC = make(chan struct{}, b.capacity)
+		b.mu.Unlock()
+
+		if conn.sndWnd.Load() == 0 { // zero-window probing
+			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
+			oldNxt := conn.sndNxt.Load()
+			newNxt := oldNxt + 1
+
+			// form the packet
+			b.mu.Lock()
+			byteToSend := b.buf[b.index(oldNxt)]
+			b.mu.Unlock()
+			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+				oldNxt, conn.expectedSeqNum.Load(),
+				header.TCPFlagAck, []byte{byteToSend}, uint16(conn.windowSize.Load()))
+
+			// start probing
+			interval := float64(1) // TODO: should be RTO
+			timeout := time.NewTimer(time.Duration(interval) * time.Second)
+			<-timeout.C
+			for conn.sndWnd.Load() == 0 && conn.sndUna.Load() == oldUna {
+				err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+				if err != nil {
+					logger.Println(err)
+					return
+				}
+				conn.sndNxt.Store(newNxt)
+				logger.Println("Sent zwp packet with byte: ", string(byteToSend))
+
+				interval *= 1.3 // TODO: determine the factor
+				timeout.Reset(time.Duration(interval) * time.Second)
+				<-timeout.C
+			}
+		} else {
+			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
+			if numBytes == 0 {
+				continue
+			}
+			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
+				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
+				header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
+			err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			if err != nil {
+				logger.Println(err)
+				return
+			}
+			logger.Println("Sent packet with bytes: ", string(bytesToSend))
+			// conn.inflightQ.PushBack(packet)
+			// update seq number
+			conn.sndNxt.Add(uint32(numBytes))
 		}
-		packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-			conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
-			header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		logger.Println("Sent packet with bytes: ", string(bytesToSend))
-		// conn.inflightQ.PushBack(packet)
-		// update seq number
-		conn.sndNxt.Add(uint32(numBytes))
-	}
-}
-
-func (conn *VTCPConn) zeroWindowProbe() {
-	_, bytesToSend := conn.bytesNotSent(1, true)
-	oldSndNxt := conn.sndNxt.Load()
-	newSndNxt := oldSndNxt + 1
-	packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-		oldSndNxt, conn.expectedSeqNum.Load(),
-		header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-
-	interval := float64(1) // TODO: should be RTO
-	timeout := time.NewTimer(time.Duration(interval) * time.Second)
-	for conn.sndWnd.Load() == 0 {
-		<-timeout.C
-
-		err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		conn.sndNxt.Store(newSndNxt)
-		logger.Println("Sent zwp packet with byte: ", string(bytesToSend))
-
-		interval *= 1.1 // TODO: determine the factor
-		timeout.Reset(time.Duration(interval) * time.Second)
 	}
 }

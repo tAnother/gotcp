@@ -83,7 +83,7 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 		conn.stateMu.Unlock()
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		conn.sndUna.Store(segAck)
-		go conn.send()
+		go conn.sendBufferedData()
 	} else {
 		logger.Printf("ACK is not acceptable.")
 	}
@@ -142,7 +142,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 			conn.t.deleteSocket(conn.TCPEndpointID)
 			return
 		}
-		go conn.send()
+		go conn.sendBufferedData()
 	} else {
 		conn.t.deleteSocket(conn.TCPEndpointID)
 		logger.Printf("Unacceptable packet. Dropping...")

@@ -158,8 +158,8 @@ func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
 		// unmarshal and validate the packet
 		tcpPacket := new(proto.TCPPacket)
 		tcpPacket.Unmarshal(ipPacket.Payload[:ipPacket.Header.TotalLen-ipPacket.Header.Len])
-		logger.Printf("\nReceived [TCP packet from %s]\t TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-			ipPacket.Header.Src, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
+		// logger.Printf("\nReceived [TCP packet from %s]\t TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
+		// 	ipPacket.Header.Src, tcpPacket.TcpHeader, proto.TCPFlagsAsString(tcpPacket.TcpHeader.Flags), len(tcpPacket.Payload), string(tcpPacket.Payload))
 
 		if !proto.ValidTCPChecksum(tcpPacket, ipPacket.Header.Src, ipPacket.Header.Dst) {
 			logger.Printf("packet dropped because checksum validation failed\n")

@@ -64,7 +64,7 @@ func (conn *VTCPConn) usableSendWindow() uint32 {
 
 // Write into the buffer, and return the number of bytes written.
 // If the buffer is full, block until there is room to write data.
-func (conn *VTCPConn) write(data []byte) int {
+func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 	b := conn.sendBuf
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -115,22 +115,10 @@ func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
 
 // Return an array of new bytes to send and its length (at max numBytes)
 // If there are no bytes to send, block until there are.
-func (conn *VTCPConn) bytesNotSent(numBytes uint, forProbe bool) (uint, []byte) {
+func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	b := conn.sendBuf
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	for conn.numBytesNotSent() == 0 {
-		b.mu.Unlock()
-		<-b.hasUnsentC
-		b.mu.Lock()
-	}
-	b.hasUnsentC = make(chan struct{}, b.capacity)
-
-	if forProbe {
-		nxt := b.buf[b.index(conn.sndNxt.Load())]
-		return 1, []byte{nxt}
-	}
 
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
 	if numBytes == 0 {

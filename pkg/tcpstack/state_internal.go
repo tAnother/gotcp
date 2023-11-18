@@ -26,7 +26,7 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 
 	// TODO : Queue in Early Arrivals
 	if segSeq > rcvNxt {
-		logger.Printf("recieved early arrival packets. Queueing...")
+		logger.Printf("received early arrival packets. Queueing...")
 		conn.earlyArrivalQ.Push(&Item{
 			value:    segment,
 			priority: segSeq,
@@ -80,7 +80,7 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 	if err != nil {
 		return err
 	}
-	logger.Printf("wrote %d bytes\n", n)
+	logger.Printf("wrote %d bytes into recv buffer\n", n)
 	conn.expectedSeqNum.Add(uint32(n))
 	newWindowSize := conn.recvBuf.FreeSpace()
 	conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
@@ -142,6 +142,9 @@ func timeWaitTimer(conn *VTCPConn) {
 
 // Check if a segment is valid based on the four cases
 func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
+	logger.Printf("\nReceived TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
+		segment.TcpHeader, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
+
 	segLen := len(segment.Payload)
 	segSeq := segment.TcpHeader.SeqNum
 	rcvWnd := conn.windowSize.Load()
@@ -163,7 +166,6 @@ func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
 	// check if seg seq is partially inside our recv window
 	cond1 := segSeq >= rcvNxt && segSeq < rcvNxt+uint32(rcvWnd)
 	cond2 := segSeq+uint32(segLen)-1 >= rcvNxt && segSeq+uint32(segLen)-1 < rcvNxt+uint32(rcvWnd)
-	logger.Println("cond1:", cond1, " cond2: ", cond2)
 	return cond1 || cond2
 }
 
