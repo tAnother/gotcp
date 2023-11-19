@@ -3,6 +3,7 @@ package tcpstack
 import (
 	"fmt"
 	"iptcp-nora-yu/pkg/proto"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -129,7 +130,9 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	conn.sndUna.Store(segAck)
 	sndUna = conn.sndUna.Load()
 
-	// TODO : clear retransmission queue
+	// 3.10.7.3 fourth SYN bit
+	// TODO : any segments on the retransmission queue that are thereby acknowledged should be removed.
+	conn.ackInflight(segAck)
 
 	if sndUna > conn.iss {
 		conn.stateMu.Lock()
@@ -137,7 +140,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 		conn.stateMu.Unlock()
 		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
 
-		err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
 			conn.t.deleteSocket(conn.TCPEndpointID)
 			return
@@ -253,9 +256,11 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 		}
 
 		// ACK Close.
+		// if the retransmission queue is empty, the user's CLOSE can be acknowledged ("ok") but do not delete the TCB.
+		// TODO : not sure if my understanding is correct tho.
 		if conn.inflightQ.Len() == 0 && segment.IsFin() {
 			conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
-			err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+			_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 			if err != nil {
 				logger.Println(err)
 				return
@@ -368,7 +373,7 @@ func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
 			return
 		}
 		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
-		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
 			logger.Println(err)
 			return
@@ -396,10 +401,15 @@ func (conn *VTCPConn) activeClose() (err error) {
 		conn.mu.Unlock()
 		// If no SENDs have been issued and there is no pending data to send
 		if conn.sndNxt.Load() != conn.iss+1 && size == 0 {
-			err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin)
+			packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 			if err != nil {
 				return err
 			}
+			// TODO : no need to lock the queue?
+			conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
+			// TODO : should I start the RTO?
+			conn.startOrResetRetransTimer(false)
+
 			conn.state = FIN_WAIT_1
 		}
 		conn.stateMu.Unlock()
@@ -414,10 +424,15 @@ func (conn *VTCPConn) activeClose() (err error) {
 			conn.mu.Unlock()
 		}
 
-		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
+		packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 		if err != nil {
 			return err
 		}
+		// TODO : no need to lock the queue?
+		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
+		// TODO : should I start the RTO?
+		conn.startOrResetRetransTimer(false)
+
 		conn.sndNxt.Add(1)
 		conn.state = FIN_WAIT_1
 		conn.stateMu.Unlock()
@@ -432,10 +447,15 @@ func (conn *VTCPConn) activeClose() (err error) {
 			conn.mu.Unlock()
 		}
 
-		err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
+		packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 		if err != nil {
 			return err
 		}
+		// TODO : no need to lock the queue?
+		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
+		// TODO : should I start the RTO?
+		conn.startOrResetRetransTimer(false)
+
 		conn.sndNxt.Add(1)
 		conn.state = LAST_ACK
 		conn.stateMu.Unlock()

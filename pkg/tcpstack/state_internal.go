@@ -14,7 +14,7 @@ import (
 func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error) {
 	if !isValidSeg(segment, conn) {
 		err := fmt.Errorf("received an unacceptable packet. Send ACK and dropped the packet")
-		e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		_, e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if e != nil {
 			return make([]byte, 0), 0, fmt.Errorf("%v err\n. sendCTL error: %v", err, e)
 		}
@@ -119,12 +119,6 @@ func handleFin(segment *proto.TCPPacket, conn *VTCPConn) error {
 	return nil
 }
 
-// func handleSyn(segment *proto.TCPPacket, conn *VTCPConn) {
-// 	// if packet.isSyn(){
-
-// 	// }
-// }
-
 /************************************ Helper Funcs ***********************************/
 
 // Timer for TIME-WAIT
@@ -180,12 +174,12 @@ func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
 	return cond1 || cond2
 }
 
-// TODO : try to refactor this
-func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) error {
+// Send CTL Packet
+func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) (*proto.TCPPacket, error) {
 	packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, seq, ack, flag, make([]byte, 0), uint16(conn.windowSize.Load()))
 	err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
 	if err != nil {
-		return err
+		return &proto.TCPPacket{}, err
 	}
-	return nil
+	return packet, nil
 }

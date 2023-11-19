@@ -48,7 +48,7 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	l.t.bindSocket(endpoint, conn)
 
 	// 3. send back SYN+ACK packet
-	err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
+	_, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
 	if err != nil {
 		l.t.deleteSocket(endpoint)
 		return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
