@@ -141,17 +141,28 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	t.bindSocket(endpoint, conn)
 
 	// create and send SYN tcp packet
-	newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
-		conn.iss, 0,
-		header.TCPFlagSyn, make([]byte, 0), BUFFER_CAPACITY)
+	// newTcpPacket := proto.NewTCPacket(endpoint.LocalPort, endpoint.RemotePort,
+	// conn.iss, 0,
+	// 	header.TCPFlagSyn, make([]byte, 0), BUFFER_CAPACITY)
 
-	err := send(t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
+	// err := send(t, newTcpPacket, endpoint.LocalAddr, endpoint.RemoteAddr)
+	// if err != nil {
+	// 	t.deleteSocket(endpoint)
+	// 	return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
+	// }
+
+	packet, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
 	if err != nil {
 		t.deleteSocket(endpoint)
 		return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
 	}
-	conn.sndNxt.Add(1)
 
+	// TODO : retransmission. This should block
+	conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()}) //  no need to lock the queue?
+	conn.startOrResetRetransTimer(false)
+	conn.handleRTO() // TODO: this will block? but should return on success
+
+	conn.sndNxt.Add(1)
 	fmt.Printf("Created a new socket with id %v\n", conn.socketId)
 
 	go conn.run() // conn goes into SYN_SENT state
