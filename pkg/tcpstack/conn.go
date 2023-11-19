@@ -110,6 +110,16 @@ func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
 	return err
 }
 
+// Send CTL Packet
+func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) (*proto.TCPPacket, error) {
+	packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, seq, ack, flag, make([]byte, 0), uint16(conn.windowSize.Load()))
+	err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
+	if err != nil {
+		return &proto.TCPPacket{}, err
+	}
+	return packet, nil
+}
+
 // Continuously send out new data in the send buffer
 func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
