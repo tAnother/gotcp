@@ -30,14 +30,23 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 	defer conn.inflightMu.Unlock()
 
 	acktime := time.Now()
+	ackRetransmit := false
+
 	for conn.inflightQ.Len() > 0 {
 		meta := conn.inflightQ.Front()
 		if meta.packet.TcpHeader.SeqNum+meta.length > ackNum {
 			break
 		}
 		popped := conn.inflightQ.PopFront()
-		if popped.counter == 0 {
-			conn.computeRTT(float64(acktime.Sub(popped.timeSent).Milliseconds()))
+
+		// update SRTT only when this ACK acknowledges new data AND
+		// does not acknowledge retransmitted packet
+		if !ackRetransmit {
+			if popped.counter != 0 {
+				ackRetransmit = true
+			} else {
+				conn.computeRTT(float64(acktime.Sub(popped.timeSent).Milliseconds()))
+			}
 		}
 	}
 
