@@ -38,11 +38,11 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
 
-		rtoMu:        sync.RWMutex{},
-		retransTimer: time.NewTimer(MIN_RTO), // should not start yet
-		rto:          1000,                   // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
+		rtoMu: sync.RWMutex{},
+		// retransTimer: time.NewTimer(MIN_RTO), // should not start yet
+		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
 		firstRTT:     &atomic.Bool{},
-		rtoIsRunning: &atomic.Bool{},
+		rtoIsRunning: false,
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
@@ -50,7 +50,6 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
 	conn.firstRTT.Store(true)
-	conn.rtoIsRunning.Store(false)
 	return conn
 }
 
@@ -96,6 +95,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
+	go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan
 		conn.stateMachine(segment)
@@ -103,20 +103,14 @@ func (conn *VTCPConn) run() {
 }
 
 // A wrapper around tcpstack.send() for packet containing data.
-// Use conn.sendCTL() instead for packet without data,
+// Use conn.sendCTL() instead for packet without data
 func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
 	err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-	if !conn.rtoIsRunning.Load() {
-		if !conn.retransTimer.Stop() {
-			<-conn.retransTimer.C
-		}
-		conn.retransTimer.Reset(conn.getRTODuration())
-		go conn.startRetransmission()
-	}
+	conn.startOrResetRetransTimer(false)
 	return err
 }
 
-// Send out new data in the send buffer
+// Continuously send out new data in the send buffer
 func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
 	for {
@@ -177,7 +171,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				return
 			}
 			// logger.Println("Sent packet with bytes: ", string(bytesToSend))
-			conn.inflightQ.PushBack(&packetMetadata{packet: packet, timeSent: time.Now(), counter: 0})
+			conn.inflightQ.PushBack(&packetMetadata{length: uint32(numBytes), packet: packet, timeSent: time.Now()}) // no need to lock the queue?
 			conn.sndNxt.Add(uint32(numBytes))
 		}
 	}

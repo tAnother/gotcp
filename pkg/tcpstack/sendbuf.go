@@ -94,23 +94,23 @@ func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 
 // Return the segment corresponding to seqNum. Use for retransmission
 // The owner's lock should be held on entry.
-func (b *sendBuf) getBytes(seqNum, length uint32) []byte {
-	if length == 0 {
-		return nil
-	}
+// func (b *sendBuf) getBytes(seqNum, length uint32) []byte {
+// 	if length == 0 {
+// 		return nil
+// 	}
 
-	start := b.index(seqNum)
-	end := b.index(seqNum + length)
+// 	start := b.index(seqNum)
+// 	end := b.index(seqNum + length)
 
-	if start < end {
-		return b.buf[start:end]
-	}
-	ret := make([]byte, length)
+// 	if start < end {
+// 		return b.buf[start:end]
+// 	}
+// 	ret := make([]byte, length)
 
-	copy(ret, b.buf[start:])
-	copy(ret[b.capacity-start:], b.buf[:end])
-	return ret
-}
+// 	copy(ret, b.buf[start:])
+// 	copy(ret[b.capacity-start:], b.buf[:end])
+// 	return ret
+// }
 
 // Return an array of new bytes to send and its length (at max numBytes)
 func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {

@@ -3,7 +3,6 @@ package tcpstack
 import (
 	"iptcp-nora-yu/pkg/proto"
 	"net/netip"
-	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -76,22 +75,4 @@ func send(t *TCPGlobalInfo, p *proto.TCPPacket, srcIP netip.Addr, destIP netip.A
 	tcpHeaderBytes := make(header.TCP, proto.DefaultTcpHeaderLen)
 	tcpHeaderBytes.Encode(p.TcpHeader)
 	return t.IP.Send(destIP, append(tcpHeaderBytes, p.Payload...), uint8(proto.ProtoNumTCP))
-}
-
-// RFC 793
-func (conn *VTCPConn) computeRTT(r float64) {
-	if conn.firstRTT.Load() {
-		conn.sRTT = r
-		conn.firstRTT.Store(false)
-	} else {
-		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
-	}
-	conn.rto = max(MIN_RTO, min(BETA*conn.sRTT, MAX_RTO))
-}
-
-// Set the timer status to be running and computes RTO duration for the timer.
-// This should be called whenever starting or reseting the retrans timer
-func (conn *VTCPConn) getRTODuration() time.Duration {
-	conn.rtoIsRunning.Store(true)
-	return time.Duration(conn.rto * float64(time.Millisecond))
 }

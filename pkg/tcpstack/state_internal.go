@@ -64,11 +64,12 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		conn.sendBuf.freespaceC <- struct{}{}
 		conn.mu.Unlock()
+
+		// TODO: calling reset before ackInflight prevents the timer
+		// that is stopped in ackInflight to be switched on again
+		// but that means we're not using the newest SRTT for timeout
+		conn.startOrResetRetransTimer(true)
 		conn.ackInflight(segAck)
-		if !conn.retransTimer.Stop() {
-			<-conn.retransTimer.C
-		}
-		conn.retransTimer.Reset(conn.getRTODuration())
 
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
