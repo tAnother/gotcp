@@ -9,8 +9,10 @@
             "program": "${workspaceFolder}/cmd/vhost/vhost.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "networks/linear-r1h2/h1.lnx"]
-
+            "args": [
+                "--config",
+                "r1h2/h1.lnx"
+            ]
         },
         {
             "name": "Run h2 (linear-r1h2)",
@@ -20,7 +22,10 @@
             "program": "${workspaceFolder}/cmd/vhost/vhost.go",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "args": ["--config", "networks/linear-r1h2/h2.lnx"]
+            "args": [
+                "--config",
+                "r1h2/h2.lnx"
+            ]
         }
         // {
         //     "name": "Run r1 (linear-r2h2)",
@@ -31,7 +36,6 @@
         //     "console": "integratedTerminal",
         //     "cwd": "${workspaceFolder}",
         //     "args": ["--config", "networks/linear-r2h2/r1.lnx"]
-
         // },
         //  {
         //     "name": "Run h1 (loop)",
@@ -42,7 +46,6 @@
         //     "console": "integratedTerminal",
         //     "cwd": "${workspaceFolder}",
         //     "args": ["--config", "networks/loop/h1.lnx"]
-
         // },
         // {
         //     "name": "Run r2 (loop)",
@@ -63,7 +66,6 @@
         //     "console": "integratedTerminal",
         //     "cwd": "${workspaceFolder}",
         //     "args": ["--config", "networks/loop/r1.lnx"]
-
         // }
     ]
 }

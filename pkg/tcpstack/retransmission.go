@@ -62,10 +62,13 @@ func (conn *VTCPConn) handleRTO() {
 	for range conn.retransTimer.C {
 		conn.inflightMu.Lock()
 		if conn.inflightQ.Len() == 0 {
-			// technically this should seldom never happen. The
-			// only case I can think of is when timer expiration and
-			// an ACK clearing up the queue happen at the same time
+			// technically this should seldom happen. The only cases I can think of are:
+			// - due to the "dummy timer start" during connection setup
+			// - when timer expiration and an ACK clearing up the queue happen at the same time
 			conn.inflightMu.Unlock()
+			conn.rtoMu.Lock()
+			conn.rtoIsRunning = false
+			conn.rtoMu.Unlock()
 			continue
 		}
 
@@ -143,7 +146,7 @@ func (conn *VTCPConn) startOrResetRetransTimer(forced bool) {
 	if conn.retransTimer == nil {
 		conn.retransTimer = time.NewTimer(conn.getRTODuration())
 	} else {
-		if !conn.retransTimer.Stop() && conn.rtoIsRunning {
+		if conn.rtoIsRunning && !conn.retransTimer.Stop() {
 			<-conn.retransTimer.C
 		}
 		conn.retransTimer.Reset(conn.getRTODuration())

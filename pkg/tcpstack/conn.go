@@ -38,8 +38,8 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		recvChan:       make(chan *proto.TCPPacket, 1),
 		timeWaitReset:  make(chan bool),
 
-		rtoMu: sync.RWMutex{},
-		// retransTimer: time.NewTimer(MIN_RTO), // should not start yet
+		rtoMu:        sync.RWMutex{},
+		retransTimer: time.NewTimer(MIN_RTO),
 		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
 		firstRTT:     &atomic.Bool{},
 		rtoIsRunning: false,
@@ -95,7 +95,6 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
-	conn.startOrResetRetransTimer(true)
 	go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan

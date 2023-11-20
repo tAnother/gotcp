@@ -43,6 +43,7 @@ func (t *TCPGlobalInfo) bindSocket(endpoint TCPEndpointID, s *VTCPConn) {
 func (t *TCPGlobalInfo) deleteSocket(endpoint TCPEndpointID) {
 	t.tableMu.Lock()
 	defer t.tableMu.Unlock()
+	t.connTable[endpoint].state = CLOSED
 	delete(t.connTable, endpoint)
 }
 
