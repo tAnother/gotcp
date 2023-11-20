@@ -139,7 +139,7 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	conn := NewSocket(t, SYN_SENT, endpoint, 0)
 	t.bindSocket(endpoint, conn)
 
-	//Handshake Retransmission
+	// handshake & possible retransmissions
 	conn.sndNxt.Add(1)
 	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
 		suc := conn.handshakeRetrans(i, true)
@@ -151,23 +151,6 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	}
 	t.deleteSocket(endpoint)
 	return nil, fmt.Errorf("error establishing connection from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
-
-	// packet, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
-	// if err != nil {
-	// 	t.deleteSocket(endpoint)
-	// 	return nil, fmt.Errorf("error sending SYN packet from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))
-	// }
-
-	// TODO : retransmission. This should block
-	// conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()}) //  no need to lock the queue?
-	// conn.startOrResetRetransTimer(false)
-	// conn.handleRTO() // TODO: this will block? but should return on success
-
-	// conn.sndNxt.Add(1)
-	// fmt.Printf("Created a new socket with id %v\n", conn.socketId)
-
-	// go conn.run() // conn goes into SYN_SENT state
-	// return conn, nil
 }
 
 /************************************ TCP Handler ***********************************/

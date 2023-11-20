@@ -48,7 +48,8 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	l.t.bindSocket(endpoint, conn)
 
 	conn.sndNxt.Add(1)
-	//Handshake Retransmission
+
+	// handshake & possible retransmissions
 	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
 		suc := conn.handshakeRetrans(i, false)
 		if suc {
@@ -59,24 +60,6 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	}
 	l.t.deleteSocket(endpoint)
 	return nil, fmt.Errorf("error establishing connection for %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort))
-
-	// // 3. send back SYN+ACK packet
-	// packet, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
-	// if err != nil {
-	// 	l.t.deleteSocket(endpoint)
-	// 	return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
-	// }
-
-	// // TODO : retransmission. This should block
-	// conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()}) //  no need to lock the queue?
-	// conn.startOrResetRetransTimer(false)
-	// conn.handleRTO() // TODO: this will block? but should return on success
-
-	// fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
-
-	// conn.sndNxt.Add(1)
-	// go conn.run() // conn goes into SYN_RECEIVED state
-	// return conn, nil
 }
 
 func (l *VTCPListener) VClose() error {
