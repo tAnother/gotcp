@@ -146,12 +146,10 @@ func (conn *VTCPConn) stopRetransTimer() {
 	conn.rtoMu.Lock()
 	defer conn.rtoMu.Unlock()
 
-	conn.rtoMu.Lock()
 	if !conn.retransTimer.Stop() {
 		<-conn.retransTimer.C
 	}
 	conn.rtoIsRunning = false
-	conn.rtoMu.Unlock()
 }
 
 // RFC 793
