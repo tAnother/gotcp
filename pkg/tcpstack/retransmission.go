@@ -61,9 +61,12 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 func (conn *VTCPConn) handleRTO() {
 	for range conn.retransTimer.C {
 		conn.inflightMu.Lock()
-		if conn.inflightQ.Len() == 0 { // TODO: technically this should never happen. what to do in this case then?
+		if conn.inflightQ.Len() == 0 {
+			// technically this should seldom never happen. The
+			// only case I can think of is when timer expiration and
+			// an ACK clearing up the queue happen at the same time
 			conn.inflightMu.Unlock()
-			return
+			continue
 		}
 
 		// get the first packet on the queue
@@ -71,7 +74,12 @@ func (conn *VTCPConn) handleRTO() {
 		if inflight.counter >= MAX_RETRANSMISSIONS {
 			conn.inflightQ.Clear()
 			conn.inflightMu.Unlock()
-			go conn.activeClose() // should i ???
+			// clear send buffer
+			conn.mu.Lock()
+			conn.sendBuf.lbw = conn.sndNxt.Load()
+			conn.sndUna.Store(conn.sndNxt.Load())
+			conn.mu.Unlock()
+			conn.t.deleteSocket(conn.TCPEndpointID)
 			return
 		}
 		conn.inflightMu.Unlock()
@@ -135,7 +143,7 @@ func (conn *VTCPConn) startOrResetRetransTimer(forced bool) {
 	if conn.retransTimer == nil {
 		conn.retransTimer = time.NewTimer(conn.getRTODuration())
 	} else {
-		if !conn.retransTimer.Stop() {
+		if !conn.retransTimer.Stop() && conn.rtoIsRunning {
 			<-conn.retransTimer.C
 		}
 		conn.retransTimer.Reset(conn.getRTODuration())
