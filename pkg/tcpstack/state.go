@@ -160,12 +160,11 @@ func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
 		return
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
+	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
 	}
 
 	if aggSegLen > 0 {
@@ -202,17 +201,24 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
 		return
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
+	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
+	}
+
+	// check if fin is acked
+	if segment.TcpHeader.AckNum == conn.sndNxt.Load() {
+		if segment.IsFin() {
+			conn.state = TIME_WAIT
+			go timeWaitTimer(conn)
 			return
 		}
-		//2. check if fin is acked
-		if segment.TcpHeader.AckNum == conn.sndNxt.Load() {
-			conn.state = FIN_WAIT_2
-			return
-		}
+		conn.state = FIN_WAIT_2
+	}
+	if segment.IsFin() {
+		conn.state = CLOSING
 	}
 
 	if aggSegLen > 0 {
@@ -220,15 +226,6 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 		if err != nil {
 			logger.Println(err)
 			return
-		}
-	}
-
-	if segment.IsFin() {
-		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
-			conn.state = TIME_WAIT
-			go timeWaitTimer(conn)
-		} else {
-			conn.state = CLOSING
 		}
 	}
 }
@@ -246,23 +243,26 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
 		return
-	} else {
-		err := handleAck(segment, conn)
+	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
+	}
+
+	// ACK Close.
+	// if the retransmission queue is empty, the user's CLOSE can be acknowledged ("ok") but do not delete the TCB.
+	// TODO : not sure if my understanding is correct tho.
+	// seems like the only events FIN-WAIT-2 would handle would be
+	// 1. acking whatever is sent from the other side
+	// 2. is isFin(), transit to TIME-WAIT
+	// so maybe it is safe to not look at the inflightQ at all
+	if conn.inflightQ.Len() == 0 && segment.IsFin() {
+		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+		_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
 			logger.Println(err)
 			return
-		}
-
-		// ACK Close.
-		// if the retransmission queue is empty, the user's CLOSE can be acknowledged ("ok") but do not delete the TCB.
-		// TODO : not sure if my understanding is correct tho.
-		if conn.inflightQ.Len() == 0 && segment.IsFin() {
-			conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
-			_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
-			if err != nil {
-				logger.Println(err)
-				return
-			}
 		}
 	}
 
@@ -281,20 +281,19 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 }
 
 func stateFuncCloseWait(conn *VTCPConn, segment *proto.TCPPacket) {
-	_, _, err := handleSeqNum(segment, conn)
-	if err != nil {
+	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
 	}
 
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
+		return
+	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
 	}
 }
 
@@ -302,96 +301,92 @@ func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
 	conn.stateMu.Lock()
 	defer conn.stateMu.Unlock()
 
-	_, _, err := handleSeqNum(segment, conn)
-	if err != nil {
+	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
 	}
 
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
-			conn.state = TIME_WAIT
-		} else {
-			logger.Printf("Our FIN is not ACKed. Dropping the packet...")
-		}
+		return
 	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if conn.sndNxt.Load() != segment.TcpHeader.AckNum {
+		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		return
+	}
+	conn.state = TIME_WAIT
+	go timeWaitTimer(conn)
 }
 
 func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
 	conn.stateMu.Lock()
 	defer conn.stateMu.Unlock()
 
-	_, _, err := handleSeqNum(segment, conn)
-	if err != nil {
+	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
 	}
 
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		if conn.sndNxt.Load() == segment.TcpHeader.AckNum {
-			conn.state = CLOSED
-			fmt.Printf("Socket %v closed", conn.socketId)
-			conn.t.deleteSocket(conn.TCPEndpointID)
-		} else {
-			logger.Printf("Our FIN is not ACKed. Dropping the packet...")
-		}
+		return
 	}
+
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
+	}
+
+	if conn.sndNxt.Load() != segment.TcpHeader.AckNum {
+		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		return
+	}
+	conn.state = CLOSED
+	fmt.Printf("Socket %v closed", conn.socketId)
+	conn.t.deleteSocket(conn.TCPEndpointID)
 }
 
 func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
 	conn.stateMu.Lock()
 	defer conn.stateMu.Unlock()
 
-	_, _, err := handleSeqNum(segment, conn)
-	if err != nil {
+	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
 	}
 
 	if !segment.IsAck() {
 		logger.Printf("ACK bit is off. Dropping the packet...")
-	} else {
-		err := handleAck(segment, conn)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
-		_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		conn.timeWaitReset <- true
+		return
 	}
 
-	if segment.IsFin() {
-		conn.timeWaitReset <- true
+	if err := handleAck(segment, conn); err != nil {
+		logger.Println(err)
+		return
 	}
+	conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+	_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+	conn.timeWaitReset <- true
 }
 
 // See RFC 9293 - 3.10.4 CLOSE Call
 func (conn *VTCPConn) activeClose() (err error) {
 	conn.stateMu.Lock()
+	defer conn.stateMu.Unlock()
 	//at this point, closed state and listen state are already handled
 	switch conn.state {
 	case SYN_SENT:
 		err = fmt.Errorf("connection closing")
-		conn.stateMu.Unlock()
 		conn.t.deleteSocket(conn.TCPEndpointID)
 	case SYN_RECEIVED:
 		conn.mu.Lock()
@@ -410,7 +405,6 @@ func (conn *VTCPConn) activeClose() (err error) {
 
 			conn.state = FIN_WAIT_1
 		}
-		conn.stateMu.Unlock()
 	case ESTABLISHED:
 		conn.mu.Lock()
 		size := conn.numBytesNotSent()
@@ -433,7 +427,6 @@ func (conn *VTCPConn) activeClose() (err error) {
 
 		conn.sndNxt.Add(1)
 		conn.state = FIN_WAIT_1
-		conn.stateMu.Unlock()
 	case CLOSE_WAIT:
 		conn.mu.Lock()
 		size := conn.numBytesNotSent()
@@ -456,10 +449,8 @@ func (conn *VTCPConn) activeClose() (err error) {
 
 		conn.sndNxt.Add(1)
 		conn.state = LAST_ACK
-		conn.stateMu.Unlock()
 	default:
 		err = fmt.Errorf("connection closing")
-		conn.stateMu.Unlock()
 	}
 	return err
 }

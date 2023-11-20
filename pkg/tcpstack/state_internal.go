@@ -140,7 +140,7 @@ func timeWaitTimer(conn *VTCPConn) {
 			if !timer.Stop() {
 				<-timer.C // Drain the channel if the timer already expired
 			}
-			timer = time.NewTimer(2 * MSL)
+			timer.Reset(2 * MSL)
 		}
 	}
 }
