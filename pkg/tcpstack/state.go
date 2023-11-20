@@ -103,7 +103,6 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 
 // See 3.10.7.3 SYN-SENT STATE
 func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
-
 	// We only care SYN + ACK for simplification
 	if !packet.IsAck() && !packet.IsSyn() {
 		conn.t.deleteSocket(conn.TCPEndpointID)
@@ -131,8 +130,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	sndUna = conn.sndUna.Load()
 
 	// 3.10.7.3 fourth SYN bit
-	// TODO : any segments on the retransmission queue that are thereby acknowledged should be removed.
-	conn.ackInflight(segAck)
+	// conn.ackInflight(segAck)
 
 	if sndUna > conn.iss {
 		conn.stateMu.Lock()

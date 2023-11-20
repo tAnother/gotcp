@@ -3,6 +3,8 @@ package tcpstack
 import (
 	"iptcp-nora-yu/pkg/proto"
 	"time"
+
+	"github.com/google/netstack/tcpip/header"
 )
 
 // Notes:
@@ -90,6 +92,32 @@ func (conn *VTCPConn) handleRTO() {
 		inflight.timeSent = time.Now()
 		inflight.counter++
 		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
+	}
+}
+
+func (conn *VTCPConn) handshakeRetrans(i int, isActive bool) bool {
+	logger.Printf("Handshake attempt %d\n", i)
+	if isActive {
+		_, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
+		if err != nil {
+			return false
+		}
+	} else {
+		_, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
+		if err != nil {
+			return false
+		}
+	}
+
+	timer := time.NewTimer(time.Duration((i + 1) * int(time.Second)))
+	for {
+		select {
+		case <-timer.C:
+			return false
+		case segment := <-conn.recvChan:
+			conn.stateMachine(segment)
+			return true
+		}
 	}
 }
 

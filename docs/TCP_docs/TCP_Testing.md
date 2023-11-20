@@ -1,5 +1,12 @@
 # TCP Testing
 
+## TODO List
+
+1. Test segment retransmission
+2. Check if we neeed to delete the corresponding socket when the passive handshake failed
+3. OOO Seg
+4. Fix ZWP if possible
+
 ## Handshake under ideal conditions [ALL PASS]
 
 1. Listen on a non-existing port: `a 9999`
@@ -39,7 +46,30 @@ rf test_files/dest.txt 9999
 sf test_files/short.txt 10.0.0.1 9999
 ```
 ![Alt text](../md_images/tcp/non-lossy-files.png)
+
 ## Retransmission
+
+### Handshake
+
+#### Active
+
+Ours: 
+
+![Alt text](../md_images/tcp/active_retrans.png)
+
+#### Passive 
+
+Ours:
+
+![Alt text](../md_images/tcp/passive_retrans.png)
+
+### Segment
+
+Drop rate: 0.02
+
+Expected:
+
+![Alt text](../md_images/tcp/ref_retrans.png)
 
 ## Connection teardown
 

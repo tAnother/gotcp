@@ -95,6 +95,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
+	conn.startOrResetRetransTimer(true)
 	go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan

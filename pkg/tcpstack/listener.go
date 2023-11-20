@@ -5,7 +5,6 @@ import (
 	"iptcp-nora-yu/pkg/proto"
 	"net/netip"
 	"sync/atomic"
-	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -48,23 +47,36 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	conn := NewSocket(l.t, SYN_RECEIVED, endpoint, tcpPacket.TcpHeader.SeqNum)
 	l.t.bindSocket(endpoint, conn)
 
-	// 3. send back SYN+ACK packet
-	packet, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
-	if err != nil {
-		l.t.deleteSocket(endpoint)
-		return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
-	}
-
-	// TODO : retransmission. This should block
-	conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()}) //  no need to lock the queue?
-	conn.startOrResetRetransTimer(false)
-	conn.handleRTO() // TODO: this will block? but should return on success
-
-	fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
-
 	conn.sndNxt.Add(1)
-	go conn.run() // conn goes into SYN_RECEIVED state
-	return conn, nil
+	//Handshake Retransmission
+	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
+		suc := conn.handshakeRetrans(i, false)
+		if suc {
+			fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+			go conn.run() // conn goes into ESTABLISHED state
+			return conn, nil
+		}
+	}
+	l.t.deleteSocket(endpoint)
+	return nil, fmt.Errorf("error establishing connection for %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort))
+
+	// // 3. send back SYN+ACK packet
+	// packet, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
+	// if err != nil {
+	// 	l.t.deleteSocket(endpoint)
+	// 	return nil, fmt.Errorf("error sending SYN+ACK packet back to %v", conn)
+	// }
+
+	// // TODO : retransmission. This should block
+	// conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()}) //  no need to lock the queue?
+	// conn.startOrResetRetransTimer(false)
+	// conn.handleRTO() // TODO: this will block? but should return on success
+
+	// fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+
+	// conn.sndNxt.Add(1)
+	// go conn.run() // conn goes into SYN_RECEIVED state
+	// return conn, nil
 }
 
 func (l *VTCPListener) VClose() error {
