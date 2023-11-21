@@ -93,6 +93,16 @@ Expected:
 
 ## Out-of-order packets
 
+For testing purpose, we need to set a high RTO:
+
+```Go
+func (conn *VTCPConn) getRTODuration() time.Duration {
+	conn.rtoIsRunning = true
+	return time.Duration(10000 * float64(time.Millisecond))
+}
+```
+
+CLI :
 ```
 drop 1
 s 0 aa

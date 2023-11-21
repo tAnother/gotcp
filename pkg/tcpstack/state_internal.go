@@ -24,9 +24,7 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 	segSeq := segment.TcpHeader.SeqNum
 	rcvNxt := conn.expectedSeqNum.Load()
 
-	// TODO : Queue in Early Arrivals
 	if segSeq > rcvNxt {
-		logger.Printf("received early arrival packets. segment %v; segSeq %v", segment.Payload, segSeq)
 		conn.earlyArrivalQ.Push(&Item{
 			value:    segment,
 			priority: segSeq,
@@ -49,7 +47,6 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 
 	//Aggregate Early Arrivals. This returns fittable aggregated data.
 	aggData, aggSeqLen = conn.aggregateEarlyArrivals(aggData, segSeq+uint32(len(aggData)))
-	logger.Printf("agg data: %v, agg length: %v", aggData, aggSeqLen)
 
 	return aggData, aggSeqLen, nil
 }
