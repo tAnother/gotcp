@@ -225,6 +225,10 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 					return
 				}
 				if err != nil {
+					err = conn.VClose()
+					if err != nil {
+						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+					}
 					io.WriteString(config.Writer, fmt.Sprintf("error reading from file: %v\n", err))
 					return
 				}
