@@ -85,6 +85,7 @@ func (conn *VTCPConn) handleRTO() {
 			conn.sndUna.Store(conn.sndNxt.Load())
 			conn.mu.Unlock()
 			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Println("Max retransmission attempts reached. Connection teared down.")
 			return
 		}
 		conn.inflightMu.Unlock()
@@ -177,8 +178,6 @@ func (conn *VTCPConn) computeRTT(r float64) {
 		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
 	}
 	conn.rto = max(MIN_RTO, min(BETA*conn.sRTT, MAX_RTO))
-
-	// conn.rto = 3000
 }
 
 // Set the timer status to be running and computes RTO duration for the timer.
