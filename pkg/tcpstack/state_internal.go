@@ -31,6 +31,7 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 			value:    segment,
 			priority: segSeq,
 		})
+		return make([]byte, 0), 0, nil
 	}
 
 	aggSeqLen := len(segment.Payload)
@@ -91,7 +92,6 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 	if err != nil {
 		return err
 	}
-	// logger.Printf("wrote %d bytes into recv buffer\n", n)
 	conn.expectedSeqNum.Add(uint32(n))
 	newWindowSize := conn.recvBuf.FreeSpace()
 	conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))

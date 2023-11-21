@@ -60,7 +60,7 @@ func (conn *VTCPConn) VClose() error {
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	readBuff := conn.recvBuf
 	conn.stateMu.RLock()
-	if conn.state == CLOSE_WAIT {
+	if conn.state == CLOSE_WAIT || conn.state == LAST_ACK {
 		conn.stateMu.RUnlock()
 		if readBuff.WindowSize() == 0 {
 			return 0, io.EOF
@@ -178,7 +178,7 @@ func (conn *VTCPConn) sendBufferedData() {
 			conn.mu.RUnlock()
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
-				logger.Println("Window is not zero, but no sendable bytes.")
+				// logger.Println("Window is not zero, but no sendable bytes.")
 				continue
 			}
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
