@@ -88,6 +88,7 @@ func (conn *VTCPConn) aggregateEarlyArrivals(data []byte, startSeq uint32) ([]by
 	}
 
 	for conn.earlyArrivalQ.Len() != 0 {
+		logger.Println("aggreagating EA for loop")
 		seg := conn.earlyArrivalQ[0].value
 		segSeq := seg.TcpHeader.SeqNum
 		segEnd := segSeq + uint32(len(seg.Payload))
@@ -117,7 +118,7 @@ func (conn *VTCPConn) aggregateEarlyArrivals(data []byte, startSeq uint32) ([]by
 		data = append(data, trim...)
 
 		// if complete merge, pop
-		if segEnd < startSeq {
+		if segEnd <= startSeq {
 			heap.Pop(&conn.earlyArrivalQ)
 		}
 		if avaiWnd == 0 {

@@ -92,3 +92,12 @@ Expected:
     ![Alt text](../md_images/tcp/normal_close_wireshark.png)
 
 ## Out-of-order packets
+
+```
+drop 1
+s 0 aa
+drop 0
+s 0 bbcc
+s 0 ddeeff
+r 1 20 --> aabbccddeeff
+```
