@@ -103,7 +103,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
-	// go conn.handleRTO()
+	go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan
 		conn.stateMachine(segment)

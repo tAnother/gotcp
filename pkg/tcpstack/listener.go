@@ -50,13 +50,11 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	conn.sndNxt.Add(1)
 
 	// handshake & possible retransmissions
-	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
-		suc := conn.handshakeRetrans(i, false)
-		if suc {
-			fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
-			go conn.run() // conn goes into ESTABLISHED state
-			return conn, nil
-		}
+	suc := conn.handshakeRetrans(0, false)
+	if suc {
+		fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
+		go conn.run() // conn goes into ESTABLISHED state
+		return conn, nil
 	}
 	l.t.deleteSocket(endpoint)
 	return nil, fmt.Errorf("error establishing connection for %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort))

@@ -141,13 +141,11 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 
 	// handshake & possible retransmissions
 	conn.sndNxt.Add(1)
-	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
-		suc := conn.handshakeRetrans(i, true)
-		if suc {
-			fmt.Printf("Created a new socket with id %v\n", conn.socketId)
-			go conn.run() // conn goes into ESTABLISHED state
-			return conn, nil
-		}
+	suc := conn.handshakeRetrans(0, true)
+	if suc {
+		fmt.Printf("Created a new socket with id %v\n", conn.socketId)
+		go conn.run() // conn goes into ESTABLISHED state
+		return conn, nil
 	}
 	t.deleteSocket(endpoint)
 	return nil, fmt.Errorf("error establishing connection from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))

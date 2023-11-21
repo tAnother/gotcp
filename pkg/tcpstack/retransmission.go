@@ -109,8 +109,11 @@ func (conn *VTCPConn) handleRTO() {
 	}
 }
 
-func (conn *VTCPConn) handshakeRetrans(i int, isActive bool) bool {
-	logger.Printf("Handshake attempt %d\n", i)
+func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
+	if attempt == MAX_RETRANSMISSIONS {
+		return false
+	}
+	logger.Printf("Handshake attempt %d\n", attempt)
 	if isActive {
 		_, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
 		if err != nil {
@@ -123,12 +126,16 @@ func (conn *VTCPConn) handshakeRetrans(i int, isActive bool) bool {
 		}
 	}
 
-	timer := time.NewTimer(time.Duration((i + 1) * int(time.Second)))
+	timer := time.NewTimer(time.Duration((attempt + 1) * int(time.Second)))
 	for {
 		select {
 		case <-timer.C:
-			return false
+			return conn.handshakeRetrans(attempt+1, isActive)
 		case segment := <-conn.recvChan:
+			// Deviation from RFC 9293: instead of checking SEQ num, we handle SYN first
+			if !isActive && segment.IsSyn() {
+				return conn.handshakeRetrans(0, false)
+			}
 			conn.stateMachine(segment)
 			return true
 		}

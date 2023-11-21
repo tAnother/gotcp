@@ -62,7 +62,7 @@ func (conn *VTCPConn) stateMachine(segment *proto.TCPPacket) {
 }
 
 func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
-	_, _, err := handleSeqNum(segment, conn)
+	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
 		logger.Println(err)
 		return
@@ -83,7 +83,15 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 		conn.state = ESTABLISHED
 		conn.stateMu.Unlock()
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+		// below is to simulate "continue processing in ESTABLISHED state" (RFC 9293 - 3.10.7.4)
 		conn.sndUna.Store(segAck)
+		if aggSegLen > 0 {
+			err := handleSegText(aggData, aggSegLen, conn)
+			if err != nil {
+				logger.Println(err)
+				return
+			}
+		}
 		go conn.sendBufferedData()
 	} else {
 		logger.Printf("ACK is not acceptable.")
