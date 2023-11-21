@@ -173,7 +173,9 @@ func (conn *VTCPConn) sendBufferedData() {
 				// interval *= 1.3 // TODO: determine the factor
 				timeout.Reset(time.Duration(interval) * time.Second)
 				<-timeout.C
+				conn.mu.RLock()
 			}
+			conn.mu.RUnlock()
 		} else {
 			conn.mu.RUnlock()
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
