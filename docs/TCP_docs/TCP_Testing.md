@@ -65,11 +65,12 @@ Ours:
 
 ### Segment
 
+Wireshark port: 5003
 Drop rate: 0.02
 
 Expected:
 
-![Alt text](../md_images/tcp/ref_retrans.png)
+![Alt text](../md_images/tcp/ref_retrans_0.02.png)
 
 ## Connection teardown
 
