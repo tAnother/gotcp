@@ -110,7 +110,7 @@ func (conn *VTCPConn) handleRTO() {
 }
 
 func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
-	if attempt == MAX_RETRANSMISSIONS {
+	if attempt == MAX_RETRANSMISSIONS + 1{
 		return false
 	}
 	logger.Printf("Handshake attempt %d\n", attempt)
