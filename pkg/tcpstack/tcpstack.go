@@ -76,12 +76,12 @@ type VTCPConn struct { // represents a TCP socket
 
 	inflightQ    *deque.Deque[*packetMetadata] // retransmission queue
 	inflightMu   sync.RWMutex
-	rtoMu        sync.RWMutex // for protecting access to retransmission related fields
 	retransTimer *time.Timer
+	rtoIsRunning bool         // if retransTimer is running (6298 - 5.1)
 	rto          float64      // Retransmission Timeout
 	firstRTT     *atomic.Bool // if this is the first measurement of RTO
 	sRTT         float64      // Smooth Round Trip Time
-	rtoIsRunning bool         // if RTO is running (6298 - 5.1)
+	rtoMu        sync.RWMutex // for protecting access to retransmission related fields
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
@@ -141,13 +141,11 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 
 	// handshake & possible retransmissions
 	conn.sndNxt.Add(1)
-	for i := 0; i <= MAX_RETRANSMISSIONS; i++ {
-		suc := conn.handshakeRetrans(i, true)
-		if suc {
-			fmt.Printf("Created a new socket with id %v\n", conn.socketId)
-			go conn.run() // conn goes into ESTABLISHED state
-			return conn, nil
-		}
+	suc := conn.handshakeRetrans(0, true)
+	if suc {
+		fmt.Printf("Created a new socket with id %v\n", conn.socketId)
+		go conn.run() // conn goes into ESTABLISHED state
+		return conn, nil
 	}
 	t.deleteSocket(endpoint)
 	return nil, fmt.Errorf("error establishing connection from %v to %v", netip.AddrPortFrom(endpoint.LocalAddr, endpoint.LocalPort), netip.AddrPortFrom(addr, port))

@@ -47,6 +47,12 @@ func (t *TCPGlobalInfo) deleteSocket(endpoint TCPEndpointID) {
 	delete(t.connTable, endpoint)
 }
 
+func (t *TCPGlobalInfo) deleteListener(port uint16) {
+	t.tableMu.Lock()
+	defer t.tableMu.Unlock()
+	delete(t.listenerTable, port)
+}
+
 func (t *TCPGlobalInfo) findListenerSocket(id int32) *VTCPListener {
 	t.tableMu.RLock()
 	defer t.tableMu.RUnlock()

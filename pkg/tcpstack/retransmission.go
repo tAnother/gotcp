@@ -3,8 +3,6 @@ package tcpstack
 import (
 	"iptcp-nora-yu/pkg/proto"
 	"time"
-
-	"github.com/google/netstack/tcpip/header"
 )
 
 // Notes:
@@ -85,6 +83,7 @@ func (conn *VTCPConn) handleRTO() {
 			conn.sndUna.Store(conn.sndNxt.Load())
 			conn.mu.Unlock()
 			conn.t.deleteSocket(conn.TCPEndpointID)
+			logger.Println("Max retransmission attempts reached. Connection teared down.")
 			return
 		}
 		conn.inflightMu.Unlock()
@@ -105,32 +104,6 @@ func (conn *VTCPConn) handleRTO() {
 		inflight.timeSent = time.Now()
 		inflight.counter++
 		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
-	}
-}
-
-func (conn *VTCPConn) handshakeRetrans(i int, isActive bool) bool {
-	logger.Printf("Handshake attempt %d\n", i)
-	if isActive {
-		_, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
-		if err != nil {
-			return false
-		}
-	} else {
-		_, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
-		if err != nil {
-			return false
-		}
-	}
-
-	timer := time.NewTimer(time.Duration((i + 1) * int(time.Second)))
-	for {
-		select {
-		case <-timer.C:
-			return false
-		case segment := <-conn.recvChan:
-			conn.stateMachine(segment)
-			return true
-		}
 	}
 }
 
@@ -177,8 +150,6 @@ func (conn *VTCPConn) computeRTT(r float64) {
 		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
 	}
 	conn.rto = max(MIN_RTO, min(BETA*conn.sRTT, MAX_RTO))
-
-	// conn.rto = 3000
 }
 
 // Set the timer status to be running and computes RTO duration for the timer.
