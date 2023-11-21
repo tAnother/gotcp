@@ -58,17 +58,25 @@ func (conn *VTCPConn) VClose() error {
 }
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
+	readBuff := conn.recvBuf
 	conn.stateMu.RLock()
 	if conn.state == CLOSE_WAIT {
 		conn.stateMu.RUnlock()
-		return 0, io.EOF
+		if readBuff.WindowSize() == 0 {
+			return 0, io.EOF
+		}
+		// consume the bytes sent before FIN
+		bytesRead, err := readBuff.Read(buf)
+		if err != nil {
+			return 0, err
+		}
+		return int(bytesRead), io.EOF
 	}
 	if conn.state == FIN_WAIT_2 || conn.state == FIN_WAIT_1 || conn.state == CLOSING {
 		conn.stateMu.RUnlock()
 		return 0, fmt.Errorf("operation not permitted")
 	}
 	conn.stateMu.RUnlock()
-	readBuff := conn.recvBuf
 	bytesRead, err := readBuff.Read(buf) // this will block if nothing to read in the buffer
 	if err != nil {
 		return 0, err
@@ -95,7 +103,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 /************************************ Private funcs ***********************************/
 
 func (conn *VTCPConn) run() {
-	go conn.handleRTO()
+	// go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan
 		conn.stateMachine(segment)
@@ -132,9 +140,9 @@ func (conn *VTCPConn) sendBufferedData() {
 			conn.mu.RLock()
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
-		conn.mu.RUnlock() // TODO: might need to use wlock cuz hasUnsentC is touched - or maybe just switch to sync.Cond orz
 
 		if conn.sndWnd.Load() == 0 { // zero-window probing
+			conn.mu.RUnlock()
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
 			oldNxt := conn.sndNxt.Load()
 			newNxt := oldNxt + 1
@@ -148,7 +156,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				header.TCPFlagAck, []byte{byteToSend}, uint16(conn.windowSize.Load()))
 
 			// start probing
-			interval := float64(1) // TODO: should be RTO
+			interval := float64(1.5) // TODO: should be RTO
 			timeout := time.NewTimer(time.Duration(interval) * time.Second)
 			<-timeout.C
 			conn.mu.RLock()
@@ -162,14 +170,15 @@ func (conn *VTCPConn) sendBufferedData() {
 				conn.sndNxt.Store(newNxt)
 				logger.Println("Sent zwp packet with byte: ", string(byteToSend))
 
-				interval *= 1.3 // TODO: determine the factor
+				// interval *= 1.3 // TODO: determine the factor
 				timeout.Reset(time.Duration(interval) * time.Second)
 				<-timeout.C
 			}
 		} else {
-			logger.Println("try sending data...")
+			conn.mu.RUnlock()
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
+				logger.Println("Window is not zero, but no sendable bytes.")
 				continue
 			}
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
@@ -180,8 +189,9 @@ func (conn *VTCPConn) sendBufferedData() {
 				logger.Println(err)
 				return
 			}
-			// logger.Println("Sent packet with bytes: ", string(bytesToSend))
 			conn.inflightQ.PushBack(&packetMetadata{length: uint32(numBytes), packet: packet, timeSent: time.Now()}) // no need to lock the queue?
+			logger.Println("Sent packet with num bytes: ", numBytes)
+			logger.Println("Packet", packet.TcpHeader.SeqNum, "pushed onto the queue.")
 			conn.sndNxt.Add(uint32(numBytes))
 		}
 	}

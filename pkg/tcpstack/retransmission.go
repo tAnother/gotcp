@@ -40,6 +40,7 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 			break
 		}
 		popped := conn.inflightQ.PopFront()
+		logger.Println(popped.packet.TcpHeader.SeqNum, "acked and popped off.")
 
 		// update SRTT only when this ACK acknowledges new data AND
 		// does not acknowledge retransmitted packet
@@ -54,6 +55,7 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 
 	if conn.inflightQ.Len() == 0 {
 		conn.stopRetransTimer()
+		logger.Println("Empty queue! Retrans timer stopped.")
 	}
 }
 
@@ -157,7 +159,7 @@ func (conn *VTCPConn) stopRetransTimer() {
 	conn.rtoMu.Lock()
 	defer conn.rtoMu.Unlock()
 
-	if !conn.retransTimer.Stop() {
+	if conn.rtoIsRunning && !conn.retransTimer.Stop() {
 		<-conn.retransTimer.C
 	}
 	conn.rtoIsRunning = false
@@ -175,6 +177,8 @@ func (conn *VTCPConn) computeRTT(r float64) {
 		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
 	}
 	conn.rto = max(MIN_RTO, min(BETA*conn.sRTT, MAX_RTO))
+
+	// conn.rto = 3000
 }
 
 // Set the timer status to be running and computes RTO duration for the timer.

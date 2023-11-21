@@ -271,6 +271,20 @@ func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 				f.Close()
 				return
 			}
+
+			defer func() {
+				f.Close()
+				//Done Receiving. Close the connection
+				err = l.VClose()
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
+				}
+				err = conn.VClose()
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+				}
+			}()
+
 			io.WriteString(config.Writer, fmt.Sprintln("rf: client connected!"))
 			totalBytesRead := 0
 			for { //read until the sender closes the connection
@@ -279,18 +293,22 @@ func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 				f.Write(buf[:bytesRead]) //TODO : do we care about the error here?
 				totalBytesRead += bytesRead
 				if err == io.EOF {
-					f.Close()
-					//Done Receiving. Close the connection
-					err = l.VClose()
-					if err != nil {
-						io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
-					}
-					err = conn.VClose()
-					if err != nil {
-						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
-					}
+					// f.Close()
+					// //Done Receiving. Close the connection
+					// err = l.VClose()
+					// if err != nil {
+					// 	io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
+					// }
+					// err = conn.VClose()
+					// if err != nil {
+					// 	io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+					// }
 					io.WriteString(config.Writer, fmt.Sprintf("Finish receiving the file. Received %d total bytes.\n", totalBytesRead))
-					break
+					return
+				}
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("error receiving file: %v\n", err))
+					return
 				}
 				logger.Printf("total read %d bytes so far", totalBytesRead)
 			}
