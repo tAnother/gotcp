@@ -62,10 +62,11 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 
 func (l *VTCPListener) VClose() error {
 	l.t.tableMu.Lock()
-	defer l.t.tableMu.Unlock()
 	if _, ok := l.t.listenerTable[l.port]; !ok {
+		l.t.tableMu.Unlock()
 		return fmt.Errorf("listener with port %v already closed", l.port)
 	}
-	delete(l.t.listenerTable, l.port)
+	l.t.tableMu.Unlock()
+	l.t.deleteListener(l.port)
 	return nil
 }

@@ -270,6 +270,7 @@ func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 		go func() {
 			conn, err := l.VAccept()
 			if err != nil {
+				l.t.deleteListener(l.port)
 				io.WriteString(config.Writer, fmt.Sprintln(err))
 				f.Close()
 				return
