@@ -48,7 +48,6 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 	segAck := segment.TcpHeader.AckNum
 	if conn.sndUna.Load()-uint32(BUFFER_CAPACITY) > segAck || // BUFFER_CAPACITY being the hardcoded MAX.SND.WND
 		conn.sndNxt.Load() < segAck {
-		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
 		if err != nil {
@@ -66,7 +65,7 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		conn.sendBuf.freespaceC <- struct{}{}
 		conn.mu.Unlock()
 
-		// TODO: calling reset before ackInflight prevents the timer
+		// calling reset before ackInflight prevents the timer
 		// that is stopped in ackInflight to be switched on again
 		// but that means we're not using the newest SRTT for timeout
 		conn.startOrResetRetransTimer(true)
@@ -75,7 +74,6 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 	} else if segAck > conn.sndNxt.Load() {
-		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err = fmt.Errorf("acking something not yet sent. Packet dropped")
 		e := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)

@@ -3,8 +3,6 @@ package tcpstack
 import (
 	"iptcp-nora-yu/pkg/proto"
 	"time"
-
-	"github.com/google/netstack/tcpip/header"
 )
 
 // Notes:
@@ -106,46 +104,6 @@ func (conn *VTCPConn) handleRTO() {
 		inflight.timeSent = time.Now()
 		inflight.counter++
 		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
-	}
-}
-
-func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
-	if attempt == MAX_RETRANSMISSIONS {
-		return false
-	}
-	logger.Printf("Handshake attempt %d\n", attempt)
-	if isActive {
-		_, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
-		if err != nil {
-			return false
-		}
-	} else {
-		_, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
-		if err != nil {
-			return false
-		}
-	}
-
-	timer := time.NewTimer(time.Duration((attempt + 1) * int(time.Second)))
-	for {
-		select {
-		case <-timer.C:
-			return conn.handshakeRetrans(attempt+1, isActive)
-		case segment := <-conn.recvChan:
-			if !isActive && segment.IsSyn() {
-				// Deviation from RFC 9293:
-				// Instead of checking SEQ num, we handle SYN first.
-				// All segment that can reach here have the same addr &
-				// port, thus we just reuse the conn for convenience,
-				// with remote-related states renewed
-				conn.irs = segment.TcpHeader.SeqNum
-				conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
-				conn.recvBuf = NewRecvBuf(BUFFER_CAPACITY, segment.TcpHeader.SeqNum)
-				return conn.handshakeRetrans(0, false)
-			}
-			conn.stateMachine(segment)
-			return true
-		}
 	}
 }
 
