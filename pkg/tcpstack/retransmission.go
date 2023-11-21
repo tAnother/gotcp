@@ -132,8 +132,15 @@ func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
 		case <-timer.C:
 			return conn.handshakeRetrans(attempt+1, isActive)
 		case segment := <-conn.recvChan:
-			// Deviation from RFC 9293: instead of checking SEQ num, we handle SYN first
 			if !isActive && segment.IsSyn() {
+				// Deviation from RFC 9293:
+				// Instead of checking SEQ num, we handle SYN first.
+				// All segment that can reach here have the same addr &
+				// port, thus we just reuse the conn for convenience,
+				// with remote-related states renewed
+				conn.irs = segment.TcpHeader.SeqNum
+				conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+				conn.recvBuf = NewRecvBuf(BUFFER_CAPACITY, segment.TcpHeader.SeqNum)
 				return conn.handshakeRetrans(0, false)
 			}
 			conn.stateMachine(segment)

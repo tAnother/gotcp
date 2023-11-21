@@ -111,7 +111,7 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 
 // See 3.10.7.3 SYN-SENT STATE
 func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
-	// We only care SYN + ACK for simplification
+	// We do not handle simultaneous openining, so we only care SYN + ACK for simplification
 	if !packet.IsAck() && !packet.IsSyn() {
 		conn.t.deleteSocket(conn.TCPEndpointID)
 		logger.Printf("Unacceptable packet. Dropping...")
@@ -123,7 +123,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	sndUna := conn.sndUna.Load()
 	segAck := packet.TcpHeader.AckNum
 
-	//1. Check Ack bit is in the range
+	// check Ack bit is in the range
 	if sndUna >= segAck && segAck > sndNxt {
 		conn.t.deleteSocket(conn.TCPEndpointID)
 		logger.Printf("Unacceptable packet. Dropping...")
@@ -136,9 +136,6 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	conn.irs = segSeq
 	conn.sndUna.Store(segAck)
 	sndUna = conn.sndUna.Load()
-
-	// 3.10.7.3 fourth SYN bit
-	// conn.ackInflight(segAck)
 
 	if sndUna > conn.iss {
 		conn.stateMu.Lock()
@@ -258,10 +255,8 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 		return
 	}
 
-	// ACK Close.
-	// if the retransmission queue is empty, the user's CLOSE can be acknowledged ("ok") but do not delete the TCB.
 	// TODO : not sure if my understanding is correct tho.
-	// seems like the only events FIN-WAIT-2 would handle would be
+	// seems like the only events FIN-WAIT-2 must handle are:
 	// 1. acking whatever is sent from the other side
 	// 2. is isFin(), transit to TIME-WAIT
 	// so maybe it is safe to not look at the inflightQ at all

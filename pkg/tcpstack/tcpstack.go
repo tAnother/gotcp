@@ -76,12 +76,12 @@ type VTCPConn struct { // represents a TCP socket
 
 	inflightQ    *deque.Deque[*packetMetadata] // retransmission queue
 	inflightMu   sync.RWMutex
-	rtoMu        sync.RWMutex // for protecting access to retransmission related fields
 	retransTimer *time.Timer
+	rtoIsRunning bool         // if retransTimer is running (6298 - 5.1)
 	rto          float64      // Retransmission Timeout
 	firstRTT     *atomic.Bool // if this is the first measurement of RTO
 	sRTT         float64      // Smooth Round Trip Time
-	rtoIsRunning bool         // if RTO is running (6298 - 5.1)
+	rtoMu        sync.RWMutex // for protecting access to retransmission related fields
 }
 
 func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
