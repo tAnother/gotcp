@@ -16,7 +16,10 @@ import (
 	deque "github.com/gammazero/deque"
 )
 
-var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile) // TODO: provide config
+var log_dir = "logs"
+var _ = os.MkdirAll(log_dir, os.ModePerm)
+var log_file, _ = os.OpenFile(fmt.Sprintf("%s/log%2d%2d%2d", log_dir, time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 077)
+var logger = log.New(log_file, "", log.Ldate|log.Ltime|log.Lshortfile) // TODO: provide config
 
 type TCPEndpointID struct {
 	LocalAddr  netip.Addr
@@ -33,7 +36,7 @@ type TCPGlobalInfo struct {
 	connTable     map[TCPEndpointID]*VTCPConn
 	tableMu       sync.RWMutex // TODO: make it finer grained?
 
-	socketNum int32 // a counter that keeps track of the most recent socket id
+	socketNum atomic.Int32 // a counter that keeps track of the most recent socket id
 
 	// TODO: add extra maps for faster querying by socket id?
 }
@@ -58,14 +61,14 @@ type VTCPConn struct { // represents a TCP socket
 	state   State
 	stateMu sync.RWMutex // for protecting access to state
 
-	iss            uint32         // initial send sequence number (unsafe - should stay unchanged once initialized)
-	irs            uint32         // initial receive sequence number (unsafe - should stay unchanged once connection established)
-	sndNxt         *atomic.Uint32 // SND.NXT - next seq num to use for sending
-	sndUna         *atomic.Uint32 // SND.UNA - the largest ACK we received
-	sndWnd         *atomic.Int32  // SND.WND - the other side's window size
-	expectedSeqNum *atomic.Uint32 // RCV.NXT- the ACK num we should send to the other side
-	windowSize     *atomic.Int32  // RCV.WND - range 0 ~ 65535
-	mu             sync.RWMutex   // for protecting access to send/recv related fields
+	iss            uint32        // initial send sequence number (unsafe - should stay unchanged once initialized)
+	irs            uint32        // initial receive sequence number (unsafe - should stay unchanged once connection established)
+	sndNxt         atomic.Uint32 // SND.NXT - next seq num to use for sending
+	sndUna         atomic.Uint32 // SND.UNA - the largest ACK we received
+	sndWnd         atomic.Int32  // SND.WND - the other side's window size
+	expectedSeqNum atomic.Uint32 // RCV.NXT- the ACK num we should send to the other side
+	windowSize     atomic.Int32  // RCV.WND - range 0 ~ 65535
+	mu             sync.RWMutex  // for protecting access to send/recv related fields
 
 	sendBuf       *sendBuf
 	recvBuf       *recvBuf
@@ -74,12 +77,14 @@ type VTCPConn struct { // represents a TCP socket
 	recvChan      chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
 	timeWaitReset chan bool
 
-	inflightQ    *deque.Deque[*packetMetadata] // retransmission queue
-	inflightMu   sync.RWMutex
+	// retransmission
+	inflightQ  *deque.Deque[*packetMetadata] // retransmission queue
+	inflightMu sync.RWMutex
+
 	retransTimer *time.Timer
 	rtoIsRunning bool         // if retransTimer is running (6298 - 5.1)
 	rto          float64      // Retransmission Timeout
-	firstRTT     *atomic.Bool // if this is the first measurement of RTO
+	firstRTT     bool         // if this is the first measurement of RTO
 	sRTT         float64      // Smooth Round Trip Time
 	rtoMu        sync.RWMutex // for protecting access to retransmission related fields
 }
@@ -101,8 +106,8 @@ func Init(ip *ipstack.IPGlobalInfo) (*TCPGlobalInfo, error) {
 		listenerTable: make(map[uint16]*VTCPListener),
 		connTable:     make(map[TCPEndpointID]*VTCPConn),
 		tableMu:       sync.RWMutex{},
-		socketNum:     -1,
 	}
+	t.socketNum.Store(-1)
 	ip.RegisterRecvHandler(proto.ProtoNumTCP, tcpRecvHandler(t))
 
 	return t, nil
@@ -140,8 +145,7 @@ func VConnect(t *TCPGlobalInfo, addr netip.Addr, port uint16) (*VTCPConn, error)
 	t.bindSocket(endpoint, conn)
 
 	// handshake & possible retransmissions
-	conn.sndNxt.Add(1)
-	suc := conn.handshakeRetrans(0, true)
+	suc := conn.doHandshakes(0, true)
 	if suc {
 		fmt.Printf("Created a new socket with id %v\n", conn.socketId)
 		go conn.run() // conn goes into ESTABLISHED state

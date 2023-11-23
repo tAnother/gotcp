@@ -1,9 +1,5 @@
 package tcpstack
 
-import (
-	"sync"
-)
-
 // TODO: tcp seq num wrap around
 
 type sendBuf struct {
@@ -15,8 +11,6 @@ type sendBuf struct {
 
 	hasUnsentC chan struct{} // signaling there are things to be sent
 	freespaceC chan struct{} // signaling some bytes are acked
-
-	mu *sync.Mutex
 }
 
 func newSendBuf(capacity uint, iss uint32) *sendBuf {
@@ -24,10 +18,9 @@ func newSendBuf(capacity uint, iss uint32) *sendBuf {
 		buf:        make([]byte, capacity),
 		capacity:   capacity,
 		iss:        iss,
-		lbw:        iss + 1, // to account for handshake // TODO: might need to change when SYN packet is dropped
+		lbw:        iss + 1, // to account for handshake
 		hasUnsentC: make(chan struct{}, capacity),
 		freespaceC: make(chan struct{}, capacity),
-		mu:         &sync.Mutex{},
 	}
 }
 

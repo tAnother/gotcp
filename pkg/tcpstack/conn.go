@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	deque "github.com/gammazero/deque"
+	"github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -18,38 +16,28 @@ import (
 func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:              t,
-		TCPEndpointID:  endpoint,
-		socketId:       atomic.AddInt32(&t.socketNum, 1),
-		state:          state,
-		stateMu:        sync.RWMutex{},
-		mu:             sync.RWMutex{},
-		irs:            remoteInitSeqNum,
-		iss:            iss,
-		sndNxt:         &atomic.Uint32{},
-		sndUna:         &atomic.Uint32{},
-		sndWnd:         &atomic.Int32{},
-		expectedSeqNum: &atomic.Uint32{},
-		windowSize:     &atomic.Int32{},
-		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
-		recvBuf:        NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
-		earlyArrivalQ:  PriorityQueue{},
-		inflightQ:      deque.New[*packetMetadata](),
-		recvChan:       make(chan *proto.TCPPacket, 1),
-		timeWaitReset:  make(chan bool),
+		t:             t,
+		TCPEndpointID: endpoint,
+		socketId:      t.socketNum.Add(1),
+		state:         state,
+		irs:           remoteInitSeqNum,
+		iss:           iss,
+		sendBuf:       newSendBuf(BUFFER_CAPACITY, iss),
+		recvBuf:       NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
+		earlyArrivalQ: PriorityQueue{},
+		recvChan:      make(chan *proto.TCPPacket, 1),
+		timeWaitReset: make(chan bool),
 
-		rtoMu:        sync.RWMutex{},
 		retransTimer: time.NewTimer(MIN_RTO),
 		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
-		firstRTT:     &atomic.Bool{},
-		rtoIsRunning: false,
+		firstRTT:     true,
+		inflightQ:    deque.New[*packetMetadata](),
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
 	conn.expectedSeqNum.Store(remoteInitSeqNum + 1)
 	conn.windowSize.Store(BUFFER_CAPACITY)
 	heap.Init(&conn.earlyArrivalQ)
-	conn.firstRTT.Store(true)
 	return conn
 }
 
@@ -111,19 +99,17 @@ func (conn *VTCPConn) setState(state State) {
 }
 
 // To handle connection handshake & possible retransmissions
-func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
+func (conn *VTCPConn) doHandshakes(attempt int, isActive bool) (succeed bool) {
 	if attempt == MAX_RETRANSMISSIONS+1 {
 		return false
 	}
 	logger.Printf("Handshake attempt %d\n", attempt)
 	if isActive {
-		_, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn)
-		if err != nil {
+		if _, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn); err != nil {
 			return false
 		}
 	} else {
-		_, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck)
-		if err != nil {
+		if _, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck); err != nil {
 			return false
 		}
 	}
@@ -132,7 +118,7 @@ func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
 	for {
 		select {
 		case <-timer.C:
-			return conn.handshakeRetrans(attempt+1, isActive)
+			return conn.doHandshakes(attempt+1, isActive)
 		case segment := <-conn.recvChan:
 			if !isActive && segment.IsSyn() {
 				// Deviation from RFC 9293:
@@ -143,8 +129,11 @@ func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {
 				conn.irs = segment.TcpHeader.SeqNum
 				conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 				conn.recvBuf = NewRecvBuf(BUFFER_CAPACITY, segment.TcpHeader.SeqNum)
-				return conn.handshakeRetrans(0, false)
+				return conn.doHandshakes(0, false)
 			}
+
+			// Handshake packet sent successfully
+			conn.sndNxt.Add(1)
 			conn.stateMachine(segment)
 			return true
 		}
@@ -163,7 +152,7 @@ func (conn *VTCPConn) run() {
 // Use conn.sendCTL() instead for packet without data
 func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
 	err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
-	conn.startOrResetRetransTimer(false)
+	conn.resetRetransTimer(false)
 	return err
 }
 

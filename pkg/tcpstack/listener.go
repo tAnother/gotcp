@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/proto"
 	"net/netip"
-	"sync/atomic"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -13,7 +12,7 @@ import (
 func NewListenerSocket(t *TCPGlobalInfo, port uint16) *VTCPListener {
 	listener := &VTCPListener{
 		t:        t,
-		socketId: atomic.AddInt32(&t.socketNum, 1),
+		socketId: t.socketNum.Add(1),
 		port:     port,
 		pendingSocketC: make(chan struct {
 			*proto.TCPPacket
@@ -47,10 +46,8 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 	conn := NewSocket(l.t, SYN_RECEIVED, endpoint, tcpPacket.TcpHeader.SeqNum)
 	l.t.bindSocket(endpoint, conn)
 
-	conn.sndNxt.Add(1)
-
 	// handshake & possible retransmissions
-	suc := conn.handshakeRetrans(0, false)
+	suc := conn.doHandshakes(0, false)
 	if suc {
 		fmt.Printf("New connection on socket %v => created new socket %v\n", l.socketId, conn.socketId)
 		go conn.run() // conn goes into ESTABLISHED state

@@ -88,6 +88,8 @@ func (conn *VTCPConn) handleRTO() {
 		}
 		conn.inflightMu.Unlock()
 
+		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
+
 		// update rto and restart the timer
 		conn.rtoMu.Lock()
 		conn.rto = min(conn.rto*2, MAX_RTO)
@@ -103,7 +105,6 @@ func (conn *VTCPConn) handleRTO() {
 		}
 		inflight.timeSent = time.Now()
 		inflight.counter++
-		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
 	}
 }
 
@@ -111,21 +112,18 @@ func (conn *VTCPConn) handleRTO() {
 
 // Set retrans timer to expire after RTO.
 // forced: whether to reset when the timer is already running
-func (conn *VTCPConn) startOrResetRetransTimer(forced bool) {
+func (conn *VTCPConn) resetRetransTimer(forced bool) {
 	conn.rtoMu.Lock()
 	defer conn.rtoMu.Unlock()
 	if !forced && conn.rtoIsRunning {
 		return
 	}
 
-	if conn.retransTimer == nil {
-		conn.retransTimer = time.NewTimer(conn.getRTODuration())
-	} else {
-		if conn.rtoIsRunning && !conn.retransTimer.Stop() {
-			<-conn.retransTimer.C
-		}
-		conn.retransTimer.Reset(conn.getRTODuration())
+	if conn.rtoIsRunning && !conn.retransTimer.Stop() {
+		<-conn.retransTimer.C
 	}
+	conn.retransTimer.Reset(conn.getRTODuration())
+	logger.Println("timer reset!")
 }
 
 func (conn *VTCPConn) stopRetransTimer() {
@@ -143,9 +141,9 @@ func (conn *VTCPConn) computeRTT(r float64) {
 	conn.rtoMu.Lock()
 	defer conn.rtoMu.Unlock()
 
-	if conn.firstRTT.Load() {
+	if conn.firstRTT {
 		conn.sRTT = r
-		conn.firstRTT.Store(false)
+		conn.firstRTT = false
 	} else {
 		conn.sRTT = (ALPHA * conn.sRTT) + (1-ALPHA)*r
 	}

@@ -2,8 +2,12 @@ VHOST=vhost
 VROUTER=vrouter
 OUTPUT_DIR=exec
 
-all:
+all: host router
+
+host:
 	go build -o ${OUTPUT_DIR}/${VHOST} ./cmd/${VHOST} 
+
+router:
 	go build -o ${OUTPUT_DIR}/${VROUTER} ./cmd/${VROUTER} 
 
 clean:

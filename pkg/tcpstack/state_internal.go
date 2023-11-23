@@ -71,12 +71,12 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		// calling reset before ackInflight prevents the timer
 		// that is stopped in ackInflight to be switched on again
 		// but that means we're not using the newest SRTT for timeout
-		conn.startOrResetRetransTimer(true)
+		conn.resetRetransTimer(true)
 		conn.ackInflight(segAck)
 
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
-		// conn.startOrResetRetransTimer(true)
+		conn.resetRetransTimer(true)
 	} else if segAck > conn.sndNxt.Load() {
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err = fmt.Errorf("acking something not yet sent. Packet dropped")

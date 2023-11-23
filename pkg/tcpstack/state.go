@@ -378,7 +378,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 			// TODO : no need to lock the queue?
 			conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
 			// TODO : should I start the RTO?
-			conn.startOrResetRetransTimer(false)
+			conn.resetRetransTimer(false)
 
 			conn.setState(FIN_WAIT_1)
 		}
@@ -400,7 +400,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 		// TODO : no need to lock the queue?
 		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
 		// TODO : should I start the RTO?
-		conn.startOrResetRetransTimer(false)
+		conn.resetRetransTimer(false)
 
 		conn.sndNxt.Add(1)
 		conn.setState(FIN_WAIT_1)
@@ -422,7 +422,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 		// TODO : no need to lock the queue?
 		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
 		// TODO : should I start the RTO?
-		conn.startOrResetRetransTimer(false)
+		conn.resetRetransTimer(false)
 
 		conn.sndNxt.Add(1)
 		conn.setState(LAST_ACK)
