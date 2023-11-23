@@ -59,9 +59,8 @@ func (conn *VTCPConn) VClose() error {
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	readBuff := conn.recvBuf
-	conn.stateMu.RLock()
-	if conn.state == CLOSE_WAIT || conn.state == LAST_ACK {
-		conn.stateMu.RUnlock()
+	curState := conn.getState()
+	if curState == CLOSE_WAIT || curState == LAST_ACK {
 		if readBuff.WindowSize() == 0 {
 			return 0, io.EOF
 		}
@@ -72,11 +71,9 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 		}
 		return int(bytesRead), io.EOF
 	}
-	if conn.state == FIN_WAIT_2 || conn.state == FIN_WAIT_1 || conn.state == CLOSING {
-		conn.stateMu.RUnlock()
+	if curState == FIN_WAIT_2 || curState == FIN_WAIT_1 || curState == CLOSING {
 		return 0, fmt.Errorf("operation not permitted")
 	}
-	conn.stateMu.RUnlock()
 	bytesRead, err := readBuff.Read(buf) // this will block if nothing to read in the buffer
 	if err != nil {
 		return 0, err
@@ -88,12 +85,10 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	bytesWritten := 0
 	for bytesWritten < len(data) {
-		conn.stateMu.RLock()
-		if conn.state == FIN_WAIT_1 || conn.state == FIN_WAIT_2 || conn.state == CLOSING || conn.state == TIME_WAIT {
-			conn.stateMu.RUnlock()
+		curState := conn.getState()
+		if curState == FIN_WAIT_1 || curState == FIN_WAIT_2 || curState == CLOSING || curState == TIME_WAIT {
 			return bytesWritten, errors.New("trying to write to a closing connection")
 		}
-		conn.stateMu.RUnlock()
 		w := conn.writeToSendBuf(data[bytesWritten:])
 		bytesWritten += w
 	}
@@ -101,6 +96,19 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 }
 
 /************************************ Private funcs ***********************************/
+
+func (conn *VTCPConn) getState() State {
+	conn.stateMu.RLock()
+	s := conn.state
+	conn.stateMu.RUnlock()
+	return s
+}
+
+func (conn *VTCPConn) setState(state State) {
+	conn.stateMu.Lock()
+	conn.state = state
+	conn.stateMu.Unlock()
+}
 
 // To handle connection handshake & possible retransmissions
 func (conn *VTCPConn) handshakeRetrans(attempt int, isActive bool) bool {

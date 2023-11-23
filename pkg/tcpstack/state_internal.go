@@ -12,6 +12,9 @@ import (
 
 // 3.10.7.4 Other states when segment arrives. It returns aggregated data to write, and aggregated seg length
 func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error) {
+	logger.Printf("\n[%s]Received TCP SEQ=%d, ACK=%d, WIN=%d\tFlags:  %s\tPayload (%d bytes):  %s\n", stateString[conn.state],
+		segment.TcpHeader.SeqNum, segment.TcpHeader.AckNum, segment.TcpHeader.WindowSize, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
+
 	if !isValidSeg(segment, conn) {
 		err := fmt.Errorf("received an unacceptable packet. Send ACK and dropped the packet")
 		_, e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
@@ -53,8 +56,9 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		if err != nil {
 			logger.Println(err)
 		}
-		return fmt.Errorf("invalid ACK num. Packet dropped")
+		return fmt.Errorf("(sndnxt=%d, snduna=%d, ack=%d) Invalid ACK num. Packet dropped", conn.sndNxt.Load(), conn.sndUna.Load(), segAck)
 	}
+	logger.Println("Valid ack num", segAck, "(SND.NXT=", conn.sndNxt.Load(), "SND.UNA=", conn.sndUna.Load())
 
 	//TODO : check rfc for more conditions. 3.7.10.4 Handle Ack in ESTABLISHED
 	if conn.sndUna.Load() < segAck && segAck <= conn.sndNxt.Load() {
@@ -64,7 +68,6 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		conn.sendBuf.freespaceC <- struct{}{}
 		conn.mu.Unlock()
-
 		// calling reset before ackInflight prevents the timer
 		// that is stopped in ackInflight to be switched on again
 		// but that means we're not using the newest SRTT for timeout
@@ -73,6 +76,7 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+		// conn.startOrResetRetransTimer(true)
 	} else if segAck > conn.sndNxt.Load() {
 		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err = fmt.Errorf("acking something not yet sent. Packet dropped")
@@ -128,9 +132,7 @@ func timeWaitTimer(conn *VTCPConn) {
 		select {
 		case <-timer.C:
 			// expires
-			conn.stateMu.Lock()
-			conn.state = CLOSED
-			conn.stateMu.Unlock()
+			conn.setState(CLOSED)
 			fmt.Printf("Socket %v closed", conn.socketId)
 			conn.t.deleteSocket(TCPEndpointID{LocalAddr: conn.LocalAddr, RemoteAddr: conn.RemoteAddr, LocalPort: conn.LocalPort, RemotePort: conn.RemotePort})
 			return
@@ -145,9 +147,6 @@ func timeWaitTimer(conn *VTCPConn) {
 
 // Check if a segment is valid based on the four cases
 func isValidSeg(segment *proto.TCPPacket, conn *VTCPConn) bool {
-	// logger.Printf("\nReceived TCP header:  %+v\tFlags:  %s\tPayload (%d bytes):  %s\n",
-	// 	segment.TcpHeader, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
-
 	segLen := len(segment.Payload)
 	segSeq := segment.TcpHeader.SeqNum
 	rcvWnd := conn.windowSize.Load()

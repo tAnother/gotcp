@@ -53,9 +53,7 @@ var stateFuncMap = []func(*VTCPConn, *proto.TCPPacket){
 }
 
 func (conn *VTCPConn) stateMachine(segment *proto.TCPPacket) {
-	conn.stateMu.RLock()
-	stateFunc := stateFuncMap[conn.state]
-	conn.stateMu.RUnlock()
+	stateFunc := stateFuncMap[conn.getState()]
 	if stateFunc != nil {
 		stateFunc(conn, segment)
 	}
@@ -79,9 +77,7 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 	sndNxt := conn.sndNxt.Load()
 
 	if sndUna < segAck && segAck <= sndNxt {
-		conn.stateMu.Lock()
-		conn.state = ESTABLISHED
-		conn.stateMu.Unlock()
+		conn.setState(ESTABLISHED)
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
 		// below is to simulate "continue processing in ESTABLISHED state" (RFC 9293 - 3.10.7.4)
 		conn.sndUna.Store(segAck)
@@ -103,9 +99,7 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 			logger.Printf("error handling fin packet")
 			return
 		}
-		conn.stateMu.Lock()
-		conn.state = CLOSE_WAIT
-		conn.stateMu.Unlock()
+		conn.setState(CLOSE_WAIT)
 	}
 }
 
@@ -138,9 +132,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	sndUna = conn.sndUna.Load()
 
 	if sndUna > conn.iss {
-		conn.stateMu.Lock()
-		conn.state = ESTABLISHED
-		conn.stateMu.Unlock()
+		conn.setState(ESTABLISHED)
 		conn.sndWnd.Store(int32(packet.TcpHeader.WindowSize))
 
 		_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
@@ -186,17 +178,12 @@ func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
 			logger.Printf("error handling fin packet")
 			return
 		}
-		conn.stateMu.Lock()
-		conn.state = CLOSE_WAIT
-		conn.stateMu.Unlock()
+		conn.setState(CLOSE_WAIT)
 		return
 	}
 }
 
 func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
-
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
 		logger.Println(err)
@@ -216,14 +203,14 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 	// check if fin is acked
 	if segment.TcpHeader.AckNum == conn.sndNxt.Load() {
 		if segment.IsFin() {
-			conn.state = TIME_WAIT
+			conn.setState(TIME_WAIT)
 			go timeWaitTimer(conn)
 			return
 		}
-		conn.state = FIN_WAIT_2
+		conn.setState(FIN_WAIT_2)
 	}
 	if segment.IsFin() {
-		conn.state = CLOSING
+		conn.setState(CLOSING)
 	}
 
 	if aggSegLen > 0 {
@@ -236,9 +223,6 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 }
 
 func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
-
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
 		logger.Println(err)
@@ -278,7 +262,7 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 	}
 
 	if segment.IsFin() {
-		conn.state = TIME_WAIT
+		conn.setState(TIME_WAIT)
 		go timeWaitTimer(conn)
 	}
 }
@@ -301,9 +285,6 @@ func stateFuncCloseWait(conn *VTCPConn, segment *proto.TCPPacket) {
 }
 
 func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
-
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
@@ -323,14 +304,11 @@ func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
 		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
 		return
 	}
-	conn.state = TIME_WAIT
+	conn.setState(TIME_WAIT)
 	go timeWaitTimer(conn)
 }
 
 func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
-
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
@@ -350,15 +328,12 @@ func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
 		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
 		return
 	}
-	conn.state = CLOSED
+	conn.setState(CLOSED)
 	fmt.Printf("Socket %v closed", conn.socketId)
 	conn.t.deleteSocket(conn.TCPEndpointID)
 }
 
 func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
-
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
 		logger.Println(err)
 		return
@@ -384,10 +359,9 @@ func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
 
 // See RFC 9293 - 3.10.4 CLOSE Call
 func (conn *VTCPConn) activeClose() (err error) {
-	conn.stateMu.Lock()
-	defer conn.stateMu.Unlock()
+	state := conn.getState()
 	//at this point, closed state and listen state are already handled
-	switch conn.state {
+	switch state {
 	case SYN_SENT:
 		err = fmt.Errorf("connection closing")
 		conn.t.deleteSocket(conn.TCPEndpointID)
@@ -406,7 +380,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 			// TODO : should I start the RTO?
 			conn.startOrResetRetransTimer(false)
 
-			conn.state = FIN_WAIT_1
+			conn.setState(FIN_WAIT_1)
 		}
 	case ESTABLISHED:
 		conn.mu.Lock()
@@ -429,7 +403,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 		conn.startOrResetRetransTimer(false)
 
 		conn.sndNxt.Add(1)
-		conn.state = FIN_WAIT_1
+		conn.setState(FIN_WAIT_1)
 	case CLOSE_WAIT:
 		conn.mu.Lock()
 		size := conn.numBytesNotSent()
@@ -451,7 +425,7 @@ func (conn *VTCPConn) activeClose() (err error) {
 		conn.startOrResetRetransTimer(false)
 
 		conn.sndNxt.Add(1)
-		conn.state = LAST_ACK
+		conn.setState(LAST_ACK)
 	default:
 		err = fmt.Errorf("connection closing")
 	}
