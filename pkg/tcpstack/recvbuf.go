@@ -103,15 +103,15 @@ func (cb *recvBuf) Write(buf []byte) (bytesWritten uint32, err error) {
 		return 0, fmt.Errorf("buffer is full")
 	}
 
-	//2. calculate free space
 	var avail uint32
+	//3. calculate free space
 	if tail >= head {
 		avail = cb.capacity - tail + head
 	} else {
 		avail = head - tail
 	}
 
-	// 3. check if there's a write overflow
+	// 2. check if there's no overflow. This cannot happen since the incoming data is trimmed to fit inside the window
 	if len(buf) > int(avail) {
 		logger.Debug("write overflow")
 		buf = buf[:avail] //cut off the write buffer to available space

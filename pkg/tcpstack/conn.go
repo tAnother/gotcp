@@ -198,9 +198,7 @@ func (conn *VTCPConn) sendBufferedData() {
 			interval := float64(2)
 			timeout := time.NewTimer(time.Duration(interval) * time.Second)
 			<-timeout.C
-			conn.mu.RLock()
 			for conn.sndWnd.Load() == 0 && conn.sndUna.Load() == oldUna {
-				conn.mu.RUnlock()
 				err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 				if err != nil {
 					logger.Error(err.Error())

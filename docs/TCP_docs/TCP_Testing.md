@@ -3,9 +3,7 @@
 ## TODO List
 
 1. Test segment retransmission
-2. Check if we neeed to delete the corresponding socket when the passive handshake failed
-3. OOO Seg
-4. Fix ZWP if possible
+2. OOO Seg
 
 ## Handshake under ideal conditions [ALL PASS]
 
@@ -92,3 +90,22 @@ Expected:
     ![Alt text](../md_images/tcp/normal_close_wireshark.png)
 
 ## Out-of-order packets
+
+For testing purpose, we need to set a high RTO:
+
+```Go
+func (conn *VTCPConn) getRTODuration() time.Duration {
+	conn.rtoIsRunning = true
+	return time.Duration(10000 * float64(time.Millisecond))
+}
+```
+
+CLI :
+```
+drop 1
+s 0 aa
+drop 0
+s 0 bbcc
+s 0 ddeeff
+r 1 20 --> aabbccddeeff
+```
