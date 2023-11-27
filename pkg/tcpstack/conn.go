@@ -13,7 +13,7 @@ import (
 )
 
 // Creates a socket
-func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
+func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn {
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
 		t:             t,
@@ -29,7 +29,7 @@ func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInit
 		timeWaitReset: make(chan bool),
 
 		retransTimer: time.NewTimer(MIN_RTO),
-		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms		// TODO: 6298 - 5.7: RTO must be reinit to 3s after 3-way handshake?
+		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms
 		firstRTT:     true,
 		inflightQ:    deque.New[*packetMetadata](),
 	}
@@ -103,7 +103,7 @@ func (conn *VTCPConn) doHandshakes(attempt int, isActive bool) (succeed bool) {
 	if attempt == MAX_RETRANSMISSIONS+1 {
 		return false
 	}
-	logger.Printf("Handshake attempt %d\n", attempt)
+	fmt.Printf("Handshake attempt %d\n", attempt)
 	if isActive {
 		if _, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn); err != nil {
 			return false
@@ -118,6 +118,7 @@ func (conn *VTCPConn) doHandshakes(attempt int, isActive bool) (succeed bool) {
 	for {
 		select {
 		case <-timer.C:
+			conn.rto = 3000 // reinit RTO to 3s if handshake ever times out
 			return conn.doHandshakes(attempt+1, isActive)
 		case segment := <-conn.recvChan:
 			if !isActive && segment.IsSyn() {
@@ -161,7 +162,7 @@ func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) (*proto.TCPPac
 	packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, seq, ack, flag, make([]byte, 0), uint16(conn.windowSize.Load()))
 	err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
 	if err != nil {
-		return &proto.TCPPacket{}, err
+		return nil, err
 	}
 	return packet, nil
 }
@@ -171,16 +172,16 @@ func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
 	for {
 		// wait until there's new data to send
-		conn.mu.RLock()
+		conn.mu.Lock()
 		for conn.numBytesNotSent() == 0 {
-			conn.mu.RUnlock()
+			conn.mu.Unlock()
 			<-b.hasUnsentC
-			conn.mu.RLock()
+			conn.mu.Lock()
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
+		conn.mu.Unlock()
 
 		if conn.sndWnd.Load() == 0 { // zero-window probing
-			conn.mu.RUnlock()
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
 			oldNxt := conn.sndNxt.Load()
 			newNxt := oldNxt + 1
@@ -194,7 +195,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				header.TCPFlagAck, []byte{byteToSend}, uint16(conn.windowSize.Load()))
 
 			// start probing
-			interval := float64(1.5) // TODO: should be RTO
+			interval := float64(2)
 			timeout := time.NewTimer(time.Duration(interval) * time.Second)
 			<-timeout.C
 			conn.mu.RLock()
@@ -202,23 +203,21 @@ func (conn *VTCPConn) sendBufferedData() {
 				conn.mu.RUnlock()
 				err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 				if err != nil {
-					logger.Println(err)
+					logger.Error(err.Error())
 					return
 				}
 				conn.sndNxt.Store(newNxt)
-				logger.Println("Sent zwp packet with byte: ", string(byteToSend))
+				logger.Debug("Sent zwp packet", "byte", string(byteToSend))
 
-				// interval *= 1.3 // TODO: determine the factor
 				timeout.Reset(time.Duration(interval) * time.Second)
 				<-timeout.C
 				conn.mu.RLock()
 			}
 			conn.mu.RUnlock()
 		} else {
-			conn.mu.RUnlock()
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
-				// logger.Println("Window is not zero, but no sendable bytes.")
+				logger.Debug("Window is not zero, but no sendable bytes")
 				continue
 			}
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
@@ -226,11 +225,11 @@ func (conn *VTCPConn) sendBufferedData() {
 				header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
 			err := conn.send(packet)
 			if err != nil {
-				logger.Println(err)
+				logger.Error(err.Error())
 				return
 			}
 			conn.inflightQ.PushBack(&packetMetadata{length: uint32(numBytes), packet: packet, timeSent: time.Now()}) // no need to lock the queue?
-			logger.Printf("Packet %d (len=%d) pushed onto the queue.\n", packet.TcpHeader.SeqNum, numBytes)
+			logger.Debug("Pushed onto the queue", "SEQ", packet.TcpHeader.SeqNum, "len", numBytes)
 			conn.sndNxt.Add(uint32(numBytes))
 		}
 	}

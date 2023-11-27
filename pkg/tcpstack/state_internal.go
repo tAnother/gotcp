@@ -12,14 +12,15 @@ import (
 
 // 3.10.7.4 Other states when segment arrives. It returns aggregated data to write, and aggregated seg length
 func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error) {
-	logger.Printf("\n[%s]Received TCP SEQ=%d, ACK=%d, WIN=%d\tFlags:  %s\tPayload (%d bytes):  %s\n", stateString[conn.state],
-		segment.TcpHeader.SeqNum, segment.TcpHeader.AckNum, segment.TcpHeader.WindowSize, proto.TCPFlagsAsString(segment.TcpHeader.Flags), len(segment.Payload), string(segment.Payload))
+	logger.Debug("Received TCP packet", "state", stateString[conn.state],
+		"SEQ", segment.TcpHeader.SeqNum, "ACK", segment.TcpHeader.AckNum, "WIN", segment.TcpHeader.WindowSize,
+		"Flags", proto.TCPFlagsAsString(segment.TcpHeader.Flags), "PayloadLen", len(segment.Payload), "Payload", string(segment.Payload))
 
 	if !isValidSeg(segment, conn) {
 		err := fmt.Errorf("received an unacceptable packet. Send ACK and dropped the packet")
 		_, e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if e != nil {
-			return make([]byte, 0), 0, fmt.Errorf("%v err\n. sendCTL error: %v", err, e)
+			logger.Error(e.Error())
 		}
 		return make([]byte, 0), 0, err
 	}
@@ -29,7 +30,7 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 
 	// TODO : Queue in Early Arrivals
 	if segSeq > rcvNxt {
-		logger.Printf("received early arrival packets. Queueing...")
+		logger.Debug("received early arrival packets. Queueing...")
 		conn.earlyArrivalQ.Push(&Item{
 			value:    segment,
 			priority: segSeq,
@@ -51,18 +52,16 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 	segAck := segment.TcpHeader.AckNum
 	if conn.sndUna.Load()-uint32(BUFFER_CAPACITY) > segAck || // BUFFER_CAPACITY being the hardcoded MAX.SND.WND
 		conn.sndNxt.Load() < segAck {
-		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
-		err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
+		_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
-			logger.Println(err)
+			logger.Error(err.Error())
 		}
 		return fmt.Errorf("(sndnxt=%d, snduna=%d, ack=%d) Invalid ACK num. Packet dropped", conn.sndNxt.Load(), conn.sndUna.Load(), segAck)
 	}
-	logger.Println("Valid ack num", segAck, "(SND.NXT=", conn.sndNxt.Load(), "SND.UNA=", conn.sndUna.Load())
+	logger.Debug("Valid ack num", "ACK", segAck, "SND.NXT", conn.sndNxt.Load(), "SND.UNA", conn.sndUna.Load())
 
-	//TODO : check rfc for more conditions. 3.7.10.4 Handle Ack in ESTABLISHED
 	if conn.sndUna.Load() < segAck && segAck <= conn.sndNxt.Load() {
-		// need to ensure atomicity when updating SND.UNA & SND.WND together
+		// seems like we need to ensure SND.UNA & SND.WND are updated atomically. Not sure why
 		conn.mu.Lock()
 		conn.sndUna.Store(segAck)
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
@@ -70,19 +69,21 @@ func handleAck(segment *proto.TCPPacket, conn *VTCPConn) (err error) {
 		conn.mu.Unlock()
 		// calling reset before ackInflight prevents the timer
 		// that is stopped in ackInflight to be switched on again
-		// but that means we're not using the newest SRTT for timeout
+		// (at the cost of not using the newest SRTT for timeout)
 		conn.resetRetransTimer(true)
 		conn.ackInflight(segAck)
 
 	} else if conn.sndUna.Load() == segAck {
 		conn.sndWnd.Store(int32(segment.TcpHeader.WindowSize))
+		// RFC 6298 suggests timer to reset only when new data is acked.
+		// We reset it here as well, as we don't want any segment to
+		// reach max retransmissions during zero-window probing
 		conn.resetRetransTimer(true)
 	} else if segAck > conn.sndNxt.Load() {
-		packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
 		err = fmt.Errorf("acking something not yet sent. Packet dropped")
-		e := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
+		_, e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if e != nil {
-			err = fmt.Errorf("%v\n send error: %v", err, e)
+			logger.Error(e.Error())
 		}
 	}
 	return err
@@ -99,11 +100,7 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 	conn.windowSize.Store(int32(min(BUFFER_CAPACITY, newWindowSize)))
 
 	// sends largest contiguous ack and left-over window size back
-	newTcpPacket := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
-		conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
-		header.TCPFlagAck, make([]byte, 0), uint16(newWindowSize))
-	err = send(conn.t, newTcpPacket, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr) // TODO: should these just call sendCTL() instead?
-	if err != nil {
+	if _, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck); err != nil {
 		return err
 	}
 	return nil
@@ -113,8 +110,7 @@ func handleSegText(aggData []byte, aggSegLen int, conn *VTCPConn) error {
 func handleFin(segment *proto.TCPPacket, conn *VTCPConn) error {
 	conn.recvBuf.AdvanceNxt(segment.TcpHeader.SeqNum, true)
 	conn.expectedSeqNum.Add(1)
-	finPacket := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck, make([]byte, 0), uint16(conn.windowSize.Load()))
-	err := send(conn.t, finPacket, conn.LocalAddr, conn.RemoteAddr)
+	_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 	if err != nil {
 		return err
 	}
@@ -124,7 +120,6 @@ func handleFin(segment *proto.TCPPacket, conn *VTCPConn) error {
 /************************************ Helper Funcs ***********************************/
 
 // Timer for TIME-WAIT
-// TODO : Not sure if the reset works...
 func timeWaitTimer(conn *VTCPConn) {
 	timer := time.NewTimer(2 * MSL)
 	defer timer.Stop()

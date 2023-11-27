@@ -38,7 +38,7 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 			break
 		}
 		popped := conn.inflightQ.PopFront()
-		logger.Println(popped.packet.TcpHeader.SeqNum, "acked and popped off.")
+		logger.Debug("Acked and popped off", "SEQ", popped.packet.TcpHeader.SeqNum)
 
 		// update SRTT only when this ACK acknowledges new data AND
 		// does not acknowledge retransmitted packet
@@ -53,7 +53,7 @@ func (conn *VTCPConn) ackInflight(ackNum uint32) {
 
 	if conn.inflightQ.Len() == 0 {
 		conn.stopRetransTimer()
-		logger.Println("Empty queue! Retrans timer stopped.")
+		logger.Debug("Empty queue! Retrans timer stopped.")
 	}
 }
 
@@ -83,12 +83,12 @@ func (conn *VTCPConn) handleRTO() {
 			conn.sndUna.Store(conn.sndNxt.Load())
 			conn.mu.Unlock()
 			conn.t.deleteSocket(conn.TCPEndpointID)
-			logger.Println("Max retransmission attempts reached. Connection teared down.")
+			logger.Info("Max retransmission attempts reached. Connection teared down.")
 			return
 		}
 		conn.inflightMu.Unlock()
 
-		logger.Printf("Retransmitting packet SEQ = %d (Attempt %d)...\n", inflight.packet.TcpHeader.SeqNum, inflight.counter)
+		logger.Debug("Retransmitting packet...", "SEQ", inflight.packet.TcpHeader.SeqNum, "attempt", inflight.counter)
 
 		// update rto and restart the timer
 		conn.rtoMu.Lock()
@@ -100,7 +100,7 @@ func (conn *VTCPConn) handleRTO() {
 		inflight.packet.TcpHeader.AckNum = conn.expectedSeqNum.Load()
 		inflight.packet.TcpHeader.WindowSize = uint16(conn.windowSize.Load())
 		if err := conn.send(inflight.packet); err != nil {
-			logger.Println(err)
+			logger.Error(err.Error())
 			return
 		}
 		inflight.timeSent = time.Now()
@@ -123,7 +123,7 @@ func (conn *VTCPConn) resetRetransTimer(forced bool) {
 		<-conn.retransTimer.C
 	}
 	conn.retransTimer.Reset(conn.getRTODuration())
-	logger.Println("timer reset!")
+	logger.Debug("timer reset!")
 }
 
 func (conn *VTCPConn) stopRetransTimer() {

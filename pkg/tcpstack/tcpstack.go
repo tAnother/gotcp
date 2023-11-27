@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"iptcp-nora-yu/pkg/ipstack"
 	"iptcp-nora-yu/pkg/proto"
+	"log/slog"
 	"time"
 
-	"log"
 	"net/netip"
 	"os"
 	"sync"
@@ -16,10 +16,13 @@ import (
 	deque "github.com/gammazero/deque"
 )
 
+// TODO: let the caller inject logger?
 var log_dir = "logs"
 var _ = os.MkdirAll(log_dir, os.ModePerm)
 var log_file, _ = os.OpenFile(fmt.Sprintf("%s/log%2d%2d%2d", log_dir, time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 077)
-var logger = log.New(log_file, "", log.Ldate|log.Ltime|log.Lshortfile) // TODO: provide config
+var logger = slog.New(slog.NewTextHandler(log_file, &slog.HandlerOptions{AddSource: true, Level: slog.LevelDebug}))
+
+// var logger = log.New(log_file, "", log.Ldate|log.Ltime|log.Lshortfile)
 
 type TCPEndpointID struct {
 	LocalAddr  netip.Addr
@@ -34,11 +37,11 @@ type TCPGlobalInfo struct {
 
 	listenerTable map[uint16]*VTCPListener // key: port num
 	connTable     map[TCPEndpointID]*VTCPConn
-	tableMu       sync.RWMutex // TODO: make it finer grained?
+	tableMu       sync.RWMutex
 
 	socketNum atomic.Int32 // a counter that keeps track of the most recent socket id
 
-	// TODO: add extra maps for faster querying by socket id?
+	// TODO: make tableMu finer grained, and add extra maps for faster querying by socket id?
 }
 
 type VTCPListener struct {
@@ -164,11 +167,11 @@ func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
 		tcpPacket.Unmarshal(ipPacket.Payload[:ipPacket.Header.TotalLen-ipPacket.Header.Len])
 
 		if !proto.ValidTCPChecksum(tcpPacket, ipPacket.Header.Src, ipPacket.Header.Dst) {
-			logger.Printf("packet dropped because checksum validation failed\n")
+			logger.Info("packet dropped because checksum validation failed")
 			return
 		}
 		if t.localAddr != ipPacket.Header.Dst {
-			logger.Printf("packet dropped because the packet with dst %v is not for %v.\n", ipPacket.Header.Dst, t.localAddr)
+			logger.Info("packet dropped because the packet is not destined for us", "dst", ipPacket.Header.Dst)
 			return
 		}
 
@@ -185,7 +188,7 @@ func tcpRecvHandler(t *TCPGlobalInfo) func(*proto.IPPacket) {
 		if s, ok := t.connTable[endpoint]; !ok {
 			l, ok := t.listenerTable[endpoint.LocalPort]
 			if !ok {
-				logger.Printf("packet dropped because there's no matching listener and normal sockets for port %v.\n", endpoint.LocalPort)
+				logger.Info("packet dropped because there's no matching listener and normal sockets", "port", endpoint.LocalPort)
 				return
 			}
 			l.pendingSocketC <- struct {

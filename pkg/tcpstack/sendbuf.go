@@ -1,7 +1,5 @@
 package tcpstack
 
-// TODO: tcp seq num wrap around
-
 type sendBuf struct {
 	buf      []byte
 	capacity uint // buffer length
@@ -85,26 +83,6 @@ func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 	return int(numBytes)
 }
 
-// Return the segment corresponding to seqNum. Use for retransmission
-// The owner's lock should be held on entry.
-// func (b *sendBuf) getBytes(seqNum, length uint32) []byte {
-// 	if length == 0 {
-// 		return nil
-// 	}
-
-// 	start := b.index(seqNum)
-// 	end := b.index(seqNum + length)
-
-// 	if start < end {
-// 		return b.buf[start:end]
-// 	}
-// 	ret := make([]byte, length)
-
-// 	copy(ret, b.buf[start:])
-// 	copy(ret[b.capacity-start:], b.buf[:end])
-// 	return ret
-// }
-
 // Return an array of new bytes to send and its length (at max numBytes)
 func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	b := conn.sendBuf
@@ -113,7 +91,7 @@ func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
 	if numBytes == 0 {
-		// TODO: This is mainly used when usable send window = 0, where we need to stop sending new data
+		// This is mainly used when usable send window = 0, where we need to stop sending new data
 		// while keep retransmitting buf[SND.UNA, SND.UNA + SND.WND)
 		// It can cause spin wait especially when SND.NXT & SND.WND both exceed SND.UNA too much
 		// (probably when an early segment gets dropped?)

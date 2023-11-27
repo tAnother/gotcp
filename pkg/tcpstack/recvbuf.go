@@ -113,7 +113,7 @@ func (cb *recvBuf) Write(buf []byte) (bytesWritten uint32, err error) {
 
 	// 3. check if there's a write overflow
 	if len(buf) > int(avail) {
-		logger.Print("write overflow")
+		logger.Debug("write overflow")
 		buf = buf[:avail] //cut off the write buffer to available space
 	}
 

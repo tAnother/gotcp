@@ -62,13 +62,13 @@ func (conn *VTCPConn) stateMachine(segment *proto.TCPPacket) {
 func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
 		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("ACK bit is not set in SYN-RECEIVED. Dropping...")
+		logger.Debug("ACK bit is not set in SYN-RECEIVED. Dropping...")
 		return
 	}
 
@@ -84,19 +84,19 @@ func stateFuncSynRcvd(conn *VTCPConn, segment *proto.TCPPacket) {
 		if aggSegLen > 0 {
 			err := handleSegText(aggData, aggSegLen, conn)
 			if err != nil {
-				logger.Println(err)
+				logger.Debug(err.Error())
 				return
 			}
 		}
 		go conn.sendBufferedData()
 	} else {
-		logger.Printf("ACK is not acceptable.")
+		logger.Debug("ACK is not acceptable.")
 	}
 
 	if segment.IsFin() {
 		err := handleFin(segment, conn)
 		if err != nil {
-			logger.Printf("error handling fin packet")
+			logger.Debug("error handling fin packet")
 			return
 		}
 		conn.setState(CLOSE_WAIT)
@@ -108,7 +108,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	// We do not handle simultaneous openining, so we only care SYN + ACK for simplification
 	if !packet.IsAck() && !packet.IsSyn() {
 		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("Unacceptable packet. Dropping...")
+		logger.Debug("Unacceptable packet. Dropping...")
 		return
 	}
 
@@ -120,7 +120,7 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 	// check Ack bit is in the range
 	if sndUna >= segAck && segAck > sndNxt {
 		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("Unacceptable packet. Dropping...")
+		logger.Debug("Unacceptable packet. Dropping...")
 		return
 	}
 
@@ -143,31 +143,31 @@ func stateFuncSynSent(conn *VTCPConn, packet *proto.TCPPacket) {
 		go conn.sendBufferedData()
 	} else {
 		conn.t.deleteSocket(conn.TCPEndpointID)
-		logger.Printf("Unacceptable packet. Dropping...")
+		logger.Debug("Unacceptable packet. Dropping...")
 	}
 }
 
 func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if aggSegLen > 0 {
 		err = handleSegText(aggData, aggSegLen, conn)
 		if err != nil {
-			logger.Println(err)
+			logger.Debug(err.Error())
 			return
 		}
 	}
@@ -175,7 +175,7 @@ func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
 	if segment.IsFin() {
 		err := handleFin(segment, conn)
 		if err != nil {
-			logger.Printf("error handling fin packet")
+			logger.Debug("error handling fin packet")
 			return
 		}
 		conn.setState(CLOSE_WAIT)
@@ -186,17 +186,17 @@ func stateFuncEstablished(conn *VTCPConn, segment *proto.TCPPacket) {
 func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
@@ -216,7 +216,7 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 	if aggSegLen > 0 {
 		err = handleSegText(aggData, aggSegLen, conn)
 		if err != nil {
-			logger.Println(err)
+			logger.Debug(err.Error())
 			return
 		}
 	}
@@ -225,17 +225,17 @@ func stateFuncFinWait1(conn *VTCPConn, segment *proto.TCPPacket) {
 func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 	aggData, aggSegLen, err := handleSeqNum(segment, conn)
 	if err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
@@ -248,7 +248,7 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 		conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 		_, err = conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 		if err != nil {
-			logger.Println(err)
+			logger.Error(err.Error())
 			return
 		}
 	}
@@ -256,7 +256,7 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 	if aggSegLen > 0 {
 		err = handleSegText(aggData, aggSegLen, conn)
 		if err != nil {
-			logger.Println(err)
+			logger.Debug(err.Error())
 			return
 		}
 	}
@@ -269,39 +269,39 @@ func stateFuncFinWait2(conn *VTCPConn, segment *proto.TCPPacket) {
 
 func stateFuncCloseWait(conn *VTCPConn, segment *proto.TCPPacket) {
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 }
 
 func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if conn.sndNxt.Load() != segment.TcpHeader.AckNum {
-		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		logger.Debug("Our FIN is not ACKed. Dropping the packet...")
 		return
 	}
 	conn.setState(TIME_WAIT)
@@ -310,22 +310,22 @@ func stateFuncClosing(conn *VTCPConn, segment *proto.TCPPacket) {
 
 func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if conn.sndNxt.Load() != segment.TcpHeader.AckNum {
-		logger.Printf("Our FIN is not ACKed. Dropping the packet...")
+		logger.Debug("Our FIN is not ACKed. Dropping the packet...")
 		return
 	}
 	conn.setState(CLOSED)
@@ -335,93 +335,89 @@ func stateFuncLastAck(conn *VTCPConn, segment *proto.TCPPacket) {
 
 func stateFuncTimeWait(conn *VTCPConn, segment *proto.TCPPacket) {
 	if _, _, err := handleSeqNum(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 
 	if !segment.IsAck() {
-		logger.Printf("ACK bit is off. Dropping the packet...")
+		logger.Debug("ACK bit is off. Dropping the packet...")
 		return
 	}
 
 	if err := handleAck(segment, conn); err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 	conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
 	_, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
 	if err != nil {
-		logger.Println(err)
+		logger.Debug(err.Error())
 		return
 	}
 	conn.timeWaitReset <- true
 }
 
 // See RFC 9293 - 3.10.4 CLOSE Call
+// TODO: see if there's way to get rid of spin wait
 func (conn *VTCPConn) activeClose() (err error) {
 	state := conn.getState()
-	//at this point, closed state and listen state are already handled
+	// at this point, closed state and listen state are already handled
 	switch state {
 	case SYN_SENT:
 		err = fmt.Errorf("connection closing")
 		conn.t.deleteSocket(conn.TCPEndpointID)
 	case SYN_RECEIVED:
-		conn.mu.Lock()
+		conn.mu.RLock()
 		size := conn.numBytesNotSent()
-		conn.mu.Unlock()
+		conn.mu.RUnlock()
 		// If no SENDs have been issued and there is no pending data to send
 		if conn.sndNxt.Load() != conn.iss+1 && size == 0 {
 			packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 			if err != nil {
 				return err
 			}
-			// TODO : no need to lock the queue?
+			// TODO : no need to lock the queue? need to start the RTO?
 			conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
-			// TODO : should I start the RTO?
 			conn.resetRetransTimer(false)
 
 			conn.setState(FIN_WAIT_1)
 		}
 	case ESTABLISHED:
-		conn.mu.Lock()
+		conn.mu.RLock()
 		size := conn.numBytesNotSent()
-		conn.mu.Unlock()
+		conn.mu.RUnlock()
 
 		for size > 0 {
-			conn.mu.Lock()
+			conn.mu.RLock()
 			size = conn.numBytesNotSent()
-			conn.mu.Unlock()
+			conn.mu.RUnlock()
 		}
 
 		packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 		if err != nil {
 			return err
 		}
-		// TODO : no need to lock the queue?
 		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
-		// TODO : should I start the RTO?
 		conn.resetRetransTimer(false)
 
 		conn.sndNxt.Add(1)
 		conn.setState(FIN_WAIT_1)
 	case CLOSE_WAIT:
-		conn.mu.Lock()
+		conn.mu.RLock()
 		size := conn.numBytesNotSent()
-		conn.mu.Unlock()
+		conn.mu.RUnlock()
 
 		for size > 0 {
-			conn.mu.Lock()
+			conn.mu.RLock()
 			size = conn.numBytesNotSent()
-			conn.mu.Unlock()
+			conn.mu.RUnlock()
 		}
 
 		packet, err := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagFin|header.TCPFlagAck)
 		if err != nil {
 			return err
 		}
-		// TODO : no need to lock the queue?
 		conn.inflightQ.PushBack(&packetMetadata{length: 0, packet: packet, timeSent: time.Now()})
-		// TODO : should I start the RTO?
 		conn.resetRetransTimer(false)
 
 		conn.sndNxt.Add(1)

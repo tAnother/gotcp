@@ -310,7 +310,7 @@ func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 					io.WriteString(config.Writer, fmt.Sprintf("error receiving file: %v\n", err))
 					return
 				}
-				logger.Printf("total read %d bytes so far", totalBytesRead)
+				logger.Debug("", "totalBytesRead", totalBytesRead)
 			}
 		}()
 		return nil
