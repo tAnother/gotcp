@@ -34,6 +34,10 @@ func handleSeqNum(segment *proto.TCPPacket, conn *VTCPConn) ([]byte, int, error)
 			value:    segment,
 			priority: segSeq,
 		})
+		_, e := conn.sendCTL(conn.sndNxt.Load(), conn.expectedSeqNum.Load(), header.TCPFlagAck)
+		if e != nil {
+			logger.Error(e.Error())
+		}
 		return make([]byte, 0), 0, nil
 	}
 

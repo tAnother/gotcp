@@ -44,7 +44,7 @@
 
 
 ## Performance
-### Measure the time to send a file (roughly 3M) over non-lossy link
+Measure the time to send a file (roughly 3M) over non-lossy link
 
 #### Reference
 The reference always takes 1.3s
@@ -56,7 +56,7 @@ Under ideal situation, it generally takes 0.8s (because we're sending more data 
 ![](docs/md_images/tcp/3mb_on_nonlossy_info_end.png)
 
 
-When there's zero window (when the receiver slows down), it takes much longer. The longest one observed was around 30s.
+When there's zero window (when the receiver slows down), it takes much longer. The longest time observed was around 30s.
 - seems to occur more frequently when testing `sf`, `rf` multiple times in a row
 
 
@@ -67,16 +67,27 @@ When testing our sender against reference receiver, or our receiver against refe
 
 
 ## Packet Capture
-
- - Requirements: a **1 megabyte** file transmission between two of your nodes. To do this, run two of your nodes in the ABC network with the lossy node in the middle, configured with a **2%** drop rate.
-        - The 3-way handshake
-        - One example segment sent and acknowledged
-        - One segment that is retransmitted
-        - Connection teardown
+**1 megabyte** file transmission between two of your nodes. To do this, run two of your nodes in the ABC network with the lossy node in the middle, configured with a **2%** drop rate.
 
 
 
+#### Reference receiver & our sender
+- One example segment sent and acknowledged
+![](docs/md_images/tcp/retransmit_re_normal.png)
+- One segment that is retransmitted
+![](docs/md_images/tcp/retransmit_re_retransmit.png)
+- Connection teardown
+![](docs/md_images/tcp/retransmit_re_teardown.png)
 
+
+#### Reference receiver & our sender
+Took too long to run... also frequently reached maximum transmissions and exited.
+
+(After 100+ seconds, still asking for seg 62465 & transferring seg 126976. Not sure why.)
+![](docs/md_images/tcp/retransmit_er_progress.png)
+
+#### Our sender & receiver
+Took too long to run...
 
 
 
@@ -88,11 +99,11 @@ When testing our sender against reference receiver, or our receiver against refe
 2. Currently send buffer / receive buffer related variables (SND.NXT, etc.) are implemented as atomics while also being protected by a general mutex `conn.mu`. The reason is "specifically when calculating usable send window, we want to ensure serializability between `reading SND.UNA & SND.WND` and `modifying SND.UNA & SND.WND`". It does feel a bit redundant.
 
 
-## Known Bugs
+## Other Known Bugs
 When testing sending 3MB fileover non-lossy link:
 1. `retransmission.go L37: meta.packet.TcpHeader.SeqNum+meta.length` sometimes reports nil pointer deref. Not sure why since all packet pushed onto the queue shouldn't be nil. Unable to consistently reproduce.
 
-2. Sometimes `rf` hangs in `CLOSE_WAIT`.
+2. Sometimes `rf` hangs in `CLOSE_WAIT`. Probably got stuck in recvbuf.Read(). Not sure why.
 
 3. Have absolutely no idea what this is all about. Seems very wrong starting from packet 4794. The received file was fine though.
 ![](docs/md_images/tcp/3mb_nonlossy_weird_bug.png)
