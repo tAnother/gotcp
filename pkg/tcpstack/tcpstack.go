@@ -19,8 +19,8 @@ import (
 // TODO: let the caller inject logger?
 var log_dir = "logs"
 var _ = os.MkdirAll(log_dir, os.ModePerm)
-var log_file, _ = os.OpenFile(fmt.Sprintf("%s/log%2d%2d%2d", log_dir, time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 077)
-var logger = slog.New(slog.NewTextHandler(log_file, &slog.HandlerOptions{AddSource: true, Level: slog.LevelDebug}))
+var log_file, _ = os.OpenFile(fmt.Sprintf("%s/log%02d%02d%02d", log_dir, time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 077)
+var logger = slog.New(slog.NewTextHandler(log_file, &slog.HandlerOptions{AddSource: true, Level: slog.LevelInfo}))
 
 // var logger = log.New(log_file, "", log.Ldate|log.Ltime|log.Lshortfile)
 
