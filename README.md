@@ -80,14 +80,14 @@ When testing our sender against reference receiver, or our receiver against refe
 ![](docs/md_images/tcp/retransmit_re_teardown.png)
 
 
-#### Reference receiver & our sender
+#### Reference sender & our receiver
 Took too long to run... also frequently reached maximum transmissions and exited.
 
 (After 100+ seconds, still asking for seg 62465 & transferring seg 126976. Not sure why.)
 ![](docs/md_images/tcp/retransmit_er_progress.png)
 
 #### Our sender & receiver
-Took too long to run...
+Same as above.
 
 
 
