@@ -209,35 +209,37 @@ func sendFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 		}
 
 		go func() {
+			defer file.Close()
 			reader := bufio.NewReaderSize(file, proto.MSS)
 			buf := make([]byte, proto.MSS)
 			bytesWritten := 0
 			for {
 				b, err := reader.Read(buf)
 				if err == io.EOF {
-					file.Close()
-					//Done sending. Close the connection
+					// Done sending. Close the connection
 					err = conn.VClose()
 					if err != nil {
 						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
 					}
-					break
-				} else if err != nil {
-					io.WriteString(config.Writer, fmt.Sprintf("error reading from file: %v\n", err))
-					file.Close()
+					io.WriteString(config.Writer, fmt.Sprintf("Sent %v bytes\n", bytesWritten))
 					return
 				}
-				// logger.Printf("read %d bytes\n", b)
+				if err != nil {
+					err = conn.VClose()
+					if err != nil {
+						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+					}
+					io.WriteString(config.Writer, fmt.Sprintf("error reading from file: %v\n", err))
+					return
+				}
 
 				w, err := conn.VWrite(buf[:b])
 				if err != nil {
 					io.WriteString(config.Writer, fmt.Sprintf("error sending file: %v\n", err))
-					file.Close()
 					return
 				}
 				bytesWritten += w
 			}
-			io.WriteString(config.Writer, fmt.Sprintf("Sent %v bytes\n", bytesWritten))
 		}()
 		return nil
 	}
@@ -268,32 +270,47 @@ func readFileHandler(t *TCPGlobalInfo) func(string, *repl.REPLConfig) error {
 		go func() {
 			conn, err := l.VAccept()
 			if err != nil {
+				l.t.deleteListener(l.port)
 				io.WriteString(config.Writer, fmt.Sprintln(err))
 				f.Close()
 				return
 			}
+
+			defer func() {
+				f.Close()
+				//Done Receiving. Close the connection
+				err = l.VClose()
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
+				}
+				err = conn.VClose()
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
+				}
+			}()
+
 			io.WriteString(config.Writer, fmt.Sprintln("rf: client connected!"))
-			totalBytesRead := 0
+			totalBytesRead := uint32(0)
 			for { //read until the sender closes the connection
 				buf := make([]byte, proto.MSS)
-				bytesRead, err := conn.VRead(buf)
-				f.Write(buf[:bytesRead]) //TODO : do we care about the error here?
+				bytesRead, err := conn.recvBuf.Read(buf)
+				conn.windowSize.Add(int32(bytesRead))
+				f.Write(buf[:bytesRead])
 				totalBytesRead += bytesRead
 				if err == io.EOF {
-					f.Close()
-					//Done Receiving. Close the connection
-					err = l.VClose()
-					if err != nil {
-						io.WriteString(config.Writer, fmt.Sprintf("failed to close the listener socket %v: %v\n", l.socketId, err))
+					//get rid of the null terminator
+					if err := f.Truncate(int64(totalBytesRead - 1)); err != nil {
+						fmt.Println("Error truncating file:", err)
+						return
 					}
-					err = conn.VClose()
-					if err != nil {
-						io.WriteString(config.Writer, fmt.Sprintf("failed to close the socket %v: %v\n", conn.socketId, err))
-					}
-					io.WriteString(config.Writer, fmt.Sprintf("Finish receiving the file. Received %d total bytes.\n", totalBytesRead))
-					break
+					io.WriteString(config.Writer, fmt.Sprintf("Finish receiving the file. Received %d total bytes.\n", totalBytesRead-1))
+					return
 				}
-				logger.Printf("total read %d bytes so far", totalBytesRead)
+				if err != nil {
+					io.WriteString(config.Writer, fmt.Sprintf("error receiving file: %v\n", err))
+					return
+				}
+				logger.Debug("", "totalBytesRead", totalBytesRead)
 			}
 		}()
 		return nil

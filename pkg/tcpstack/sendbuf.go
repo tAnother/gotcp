@@ -1,11 +1,5 @@
 package tcpstack
 
-import (
-	"sync"
-)
-
-// TODO: tcp seq num wrap around
-
 type sendBuf struct {
 	buf      []byte
 	capacity uint // buffer length
@@ -15,8 +9,6 @@ type sendBuf struct {
 
 	hasUnsentC chan struct{} // signaling there are things to be sent
 	freespaceC chan struct{} // signaling some bytes are acked
-
-	mu *sync.Mutex
 }
 
 func newSendBuf(capacity uint, iss uint32) *sendBuf {
@@ -24,10 +16,9 @@ func newSendBuf(capacity uint, iss uint32) *sendBuf {
 		buf:        make([]byte, capacity),
 		capacity:   capacity,
 		iss:        iss,
-		lbw:        iss + 1, // to account for handshake // TODO: might need to change when SYN packet is dropped
+		lbw:        iss + 1, // to account for handshake
 		hasUnsentC: make(chan struct{}, capacity),
 		freespaceC: make(chan struct{}, capacity),
-		mu:         &sync.Mutex{},
 	}
 }
 
@@ -92,28 +83,7 @@ func (conn *VTCPConn) writeToSendBuf(data []byte) int {
 	return int(numBytes)
 }
 
-// Return the segment corresponding to seqNum. Use for retransmission
-// The owner's lock should be held on entry.
-func (b *sendBuf) getBytes(seqNum uint32, length int) []byte {
-	if length == 0 {
-		return nil
-	}
-
-	start := b.index(seqNum)
-	end := b.index(seqNum + uint32(length))
-
-	if start < end {
-		return b.buf[start:end]
-	}
-	ret := make([]byte, length)
-
-	copy(ret, b.buf[start:])
-	copy(ret[b.capacity-start:], b.buf[:end])
-	return ret
-}
-
 // Return an array of new bytes to send and its length (at max numBytes)
-// If there are no bytes to send, block until there are.
 func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 	b := conn.sendBuf
 	conn.mu.RLock()
@@ -121,7 +91,7 @@ func (conn *VTCPConn) bytesNotSent(numBytes uint) (uint, []byte) {
 
 	numBytes = min(numBytes, uint(conn.numBytesNotSent()), uint(conn.usableSendWindow()))
 	if numBytes == 0 {
-		// TODO: This is mainly used when usable send window = 0, where we need to stop sending new data
+		// This is mainly used when usable send window = 0, where we need to stop sending new data
 		// while keep retransmitting buf[SND.UNA, SND.UNA + SND.WND)
 		// It can cause spin wait especially when SND.NXT & SND.WND both exceed SND.UNA too much
 		// (probably when an early segment gets dropped?)

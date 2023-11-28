@@ -14,9 +14,7 @@ func (t *TCPGlobalInfo) GetSocketTableString() []string {
 	}
 
 	for _, conn := range t.connTable {
-		conn.stateMu.RLock()
-		res[index] = fmt.Sprintf("%v\t%v\t%v\t%v\t%v\t%v\n", conn.socketId, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemoteAddr, conn.TCPEndpointID.RemotePort, stateString[conn.state])
-		conn.stateMu.RUnlock()
+		res[index] = fmt.Sprintf("%v\t%v\t%v\t%v\t%v\t%v\n", conn.socketId, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemoteAddr, conn.TCPEndpointID.RemotePort, stateString[conn.getState()])
 		index += 1
 	}
 	return res

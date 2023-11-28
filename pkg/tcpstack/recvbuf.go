@@ -6,8 +6,9 @@ import (
 	"sync"
 )
 
-// const BUFFER_CAPACITY = 1<<16 - 1
-const BUFFER_CAPACITY = 8
+const BUFFER_CAPACITY = 1<<16 - 1
+
+// const BUFFER_CAPACITY = 8
 
 // We take this MIT licensed package as an example: https://github.com/smallnest/ringbuffer/blob/master/ring_buffer.go
 
@@ -102,17 +103,17 @@ func (cb *recvBuf) Write(buf []byte) (bytesWritten uint32, err error) {
 		return 0, fmt.Errorf("buffer is full")
 	}
 
-	//2. calculate free space
 	var avail uint32
+	//3. calculate free space
 	if tail >= head {
 		avail = cb.capacity - tail + head
 	} else {
 		avail = head - tail
 	}
 
-	// 3. check if there's a write overflow
+	// 2. check if there's no overflow. This cannot happen since the incoming data is trimmed to fit inside the window
 	if len(buf) > int(avail) {
-		logger.Print("write overflow")
+		logger.Debug("write overflow")
 		buf = buf[:avail] //cut off the write buffer to available space
 	}
 

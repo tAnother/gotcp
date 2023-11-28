@@ -1,21 +1,4 @@
-# TCP
-
-- **Major design decisions**
-- **TCP traffic**, as follows: \
-    measure your implementation’s performance relative to the reference node and comment on it in your README.
-    To get a baseline for performance, run two reference nodes connected directly to each other with no packet loss and compare the time to send a file of a few megabytes in size (you can also directly measure the throughput in Wireshark). Your implementation should have performance on the same order of magnitude as the reference under the same test conditions.
-- **Packet capture**: 
-    - Requirements: a **1 megabyte** file transmission between two of your nodes. To do this, run two of your nodes in the ABC network with the lossy node in the middle, configured with a **2%** drop rate.
-        - The 3-way handshake
-        - One example segment sent and acknowledged
-        - One segment that is retransmitted
-        - Connection teardown
-
-## Known Bugs
-
-1. Concurrency Issue: ZWP sometimes does not ack the new data when a small window change is immediately refilled. We believe this is due to the concurrency issue of SND_UNA and SND_WND. 
-
-## Design 
+# TCP   
 
 ### Directory Structure
 
@@ -29,169 +12,98 @@
 │   │   ├── tcppacket.go
 │   │   ├── rip.go
 │   ├── ipnode
-│   │   ├── node.go             -- shared structs & functions among routers & hosts
-│   │   ├── node_print.go
-│   │   ├── node_subr.go
+│   │   ├── ipstack.go             -- shared structs & functions among routers & hosts
+│   │   ├── ip_print.go
+│   │   ├── ip_internal.go
 │   │   ├── ip_repl.go
 │   ├── tcpstack
-│   │   ├── tcpstack.go         -- shared structs & functions for tcpstack
-│   │   ├── conn.go             -- normal socket related functions
-│   │   ├── listener.go         -- listener socket related functions
+│   │   ├── tcpstack.go         -- initialization & general APIs
+│   │   ├── tcp_internal.go 	
+│   │   ├── conn.go             -- normal socket related APIs & functions
+│   │   ├── listener.go         -- listener socket related APIs & functions
 │   │   ├── state.go            -- state machine
-│   │   ├── tcb.go              -- tcb info
+│   │   ├── state_internal.go 
+│   │   ├── retransmission.go 
+│   │   ├── sendbuf.go      
+│   │   ├── recvbuf.go      
+│   │   ├── priorityqueue.go 
 │   │   ├── tcp_repl.go         
 │   │   ├── tcp_print.go  
-│   │   ├── tcp_internal.go 
-│   │   ├── cirbuff.go      
 │   │   ├── utils.go  
-│   ├── repl
-│   │   ├── repl.go
-│   ├── vhost
-│   │   ├── vhost.go
-│   ├── vrouter
-│   │   ├── vrouter.go
-│   │   ├── utils.go
+│   ├── repl					-- common repl pkg
+│   ├── vhost					-- vhost specific logics
+│   ├── vrouter					-- vrouter specific logics
 │   ├── lnxconfig               -- parser for .lnx file
 ├── util
 │   ├── rip-dissector           -- for wireshark to decode messages in RIP protocols
-├── reference                   -- reference programs
-├── net                         -- network topologies
-└── Makefile
+│   ├── vnet_generate			-- generate .lnx from .json
+│   ├── vnet_run				-- spawn tmux session
+│   ├── gen_testfile.py			-- for generating files of certain size
+└── reference                   -- reference programs
 ```
 
-### pkg: tcpstack
 
-#### tcpstack.go
+## Performance
+Measure the time to send a file (roughly 3M) over non-lossy link
 
-It contains how structs are defined under tcp stack and APIs.
+#### Reference
+The reference always takes 1.3s
+![](docs/md_images/tcp/ref_3mb_on_nonlossy_start.png)
+![](docs/md_images/tcp/ref_3mb_on_nonlossy_end.png)
 
-```Go
-
-type TCPEndpointID struct{
-    localAddr  netip.Addr
-    localPort  uint16
-    remoteAddr netip.Addr
-    remotePort uint16
-}
+#### Our sender & receiver
+Under ideal situation, it generally takes 0.8s (because we're sending more data in each segment than the reference). 
+![](docs/md_images/tcp/3mb_on_nonlossy_info_end.png)
 
 
-type TCPGlobalInfo struct {
-	IP        *ipstack.IPGlobalInfo
-	localAddr netip.Addr
-
-	listenerTable map[uint16]*VTCPListener // key: port num
-	connTable     map[TCPEndpointID]*VTCPConn
-	tableMu       sync.RWMutex // TODO: make it finer grained?
-
-	socketNum int32 // a counter that keeps track of the most recent socket id
-
-	// TODO: add extra maps for faster querying by socket id?
-}
-
-type VTCPListener struct {
-	t *TCPGlobalInfo // a pointer to the tcp global state struct
-
-	socketId       int32
-	port           uint16
-	pendingSocketC chan struct {
-		*proto.TCPPacket
-		netip.Addr
-	}
-}
-
-type VTCPConn struct { // represents a TCP socket
-	t *TCPGlobalInfo // a pointer to the tcp global state struct
-
-	TCPEndpointID
-	socketId int32
-
-	state   State
-	stateMu sync.RWMutex
-
-	srtt             *SRTT
-	localInitSeqNum  uint32         // ISS (unsafe - should stay unchanged once initialized)
-	remoteInitSeqNum uint32         // IRS (unsafe - should stay unchanged once the connection is established)
-	seqNum           *atomic.Uint32 // SND.NXT - next seq num to use
-	largestAck       *atomic.Uint32 // SND.UNA - the largest ACK we received
-	expectedSeqNum   *atomic.Uint32 // the ACK num we should send to the other side
-	windowSize       *atomic.Int32  // RCV.WND - range 0 ~ 65535
-
-	sendBuf *sendBuf
-	recvBuf *CircBuff
-
-	recvChan chan *proto.TCPPacket // for receiving tcp packets dispatched to this connection
-	closeC   chan struct{}         // for closing // TODO: or also for other user input...?
-}
+When there's zero window (when the receiver slows down), it takes much longer. The longest time observed was around 30s.
+- seems to occur more frequently when testing `sf`, `rf` multiple times in a row
 
 
-func Init(addr netip.Addr, host *vhost.VHost) 
-func VListen(port uint16) (*VTCPListener, error)
-func VConnect(addr netip.Addr, port int16) (VTCPConn, error)
-func tcpRecvHandler(packet *proto.Packet, node *ipnode.Node)
-```
 
-#### listener.go
+When testing our sender against reference receiver, or our receiver against reference sender:
+- when no Zero Window occurred, it took 0.6~0.8s 
+- when Zero Window occurred only once (with reference receiver), it took roughly 5s
 
-```Go
-func NewListenerSocket(port uint16, addr netip.Addr) *VTCPListener 
-func (*VTCPListener) VAccept() (*VTCPConn, error)
-func (*VTCPListener) VClose() error
-```
-
-#### conn.go
-
-```Go
-func NewSocket(state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn
-
-func (*VTCPConn) VRead(buf []byte) (int, error) // not for milestone I
-func (*VTCPConn) VWrite(data []byte) (int, error) // not for milestone I
-func (*VTCPConn) VClose() error // not for milestone I
-```
-
-#### state.go
-
-It contains state machine which handles states under different situations.
-
-```Go
-
-func handleSynRecvd(conn *VTCPConn, endPoint TCPEndpointID) error
-func handleSynSent(conn *VTCPConn, endpoint TCPEndpointID) error
-//...etc
-```
-
-#### tcp_repl.go
- 
-This contains all cli handlers for tcp stack.
-
-
-#### circBuff.go
-
-```Go
-type CircBuff struct {
-	buff     []byte
-	capacity uint32
-	lbr      uint32
-	nxt      uint32
-	isFull   bool
-	canRead  chan bool
-	lock     sync.Mutex
-}
-
-func (cb *CircBuff) Read(buf []byte) (bytesRead uint32, err error) 
-func (cb *CircBuff) Write(buf []byte) (bytesWritten uint32, err error)
-```
-
-### proto
-
-#### tcppacket.go
-
-```Go
-type TCPPacket struct {
-	TcpHeader *header.TCPFields
-	Payload   []byte
-}
-```
-
-## TCP Traffic
 
 ## Packet Capture
+**1 megabyte** file transmission between two of your nodes. To do this, run two of your nodes in the ABC network with the lossy node in the middle, configured with a **2%** drop rate.
+
+
+
+#### Reference receiver & our sender
+- One example segment sent and acknowledged
+![](docs/md_images/tcp/retransmit_re_normal.png)
+- One segment that is retransmitted
+![](docs/md_images/tcp/retransmit_re_retransmit.png)
+- Connection teardown
+![](docs/md_images/tcp/retransmit_re_teardown.png)
+
+
+#### Reference receiver & our sender
+Took too long to run... also frequently reached maximum transmissions and exited.
+
+(After 100+ seconds, still asking for seg 62465 & transferring seg 126976. Not sure why.)
+![](docs/md_images/tcp/retransmit_er_progress.png)
+
+#### Our sender & receiver
+Took too long to run...
+
+
+
+
+## Notes
+### Some Design Choice:
+1. RFC 9293 seems to suggest each segment on the retransmission queue should have its own timeout. We're not sure how to implement that since we're only using one timer, and we're not updating the sent time of a segment due to retransmissions.
+
+2. Currently send buffer / receive buffer related variables (SND.NXT, etc.) are implemented as atomics while also being protected by a general mutex `conn.mu`. The reason is "specifically when calculating usable send window, we want to ensure serializability between `reading SND.UNA & SND.WND` and `modifying SND.UNA & SND.WND`". It does feel a bit redundant.
+
+
+## Other Known Bugs
+When testing sending 3MB fileover non-lossy link:
+1. `retransmission.go L37: meta.packet.TcpHeader.SeqNum+meta.length` sometimes reports nil pointer deref. Not sure why since all packet pushed onto the queue shouldn't be nil. Unable to consistently reproduce.
+
+2. Sometimes `rf` hangs in `CLOSE_WAIT`. Probably got stuck in recvbuf.Read(). Not sure why.
+
+3. Have absolutely no idea what this is all about. Seems very wrong starting from packet 4794. The received file was fine though.
+![](docs/md_images/tcp/3mb_nonlossy_weird_bug.png)

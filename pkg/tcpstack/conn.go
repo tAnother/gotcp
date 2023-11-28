@@ -6,38 +6,32 @@ import (
 	"fmt"
 	"io"
 	"iptcp-nora-yu/pkg/proto"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	deque "github.com/gammazero/deque"
+	"github.com/gammazero/deque"
 	"github.com/google/netstack/tcpip/header"
 )
 
 // Creates a socket
-func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn { // TODO: get rid of state? use a default init state?
+func NewSocket(t *TCPGlobalInfo, state State, endpoint TCPEndpointID, remoteInitSeqNum uint32) *VTCPConn {
 	iss := generateStartSeqNum()
 	conn := &VTCPConn{
-		t:              t,
-		TCPEndpointID:  endpoint,
-		socketId:       atomic.AddInt32(&t.socketNum, 1),
-		state:          state,
-		stateMu:        sync.RWMutex{},
-		mu:             sync.RWMutex{},
-		srtt:           &SRTT{}, //TODO
-		irs:            remoteInitSeqNum,
-		iss:            iss,
-		sndNxt:         &atomic.Uint32{},
-		sndUna:         &atomic.Uint32{},
-		sndWnd:         &atomic.Int32{},
-		expectedSeqNum: &atomic.Uint32{},
-		windowSize:     &atomic.Int32{},
-		sendBuf:        newSendBuf(BUFFER_CAPACITY, iss),
-		recvBuf:        NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
-		earlyArrivalQ:  PriorityQueue{},
-		inflightQ:      deque.New[*proto.TCPPacket](),
-		recvChan:       make(chan *proto.TCPPacket, 1),
-		timeWaitReset:  make(chan bool),
+		t:             t,
+		TCPEndpointID: endpoint,
+		socketId:      t.socketNum.Add(1),
+		state:         state,
+		irs:           remoteInitSeqNum,
+		iss:           iss,
+		sendBuf:       newSendBuf(BUFFER_CAPACITY, iss),
+		recvBuf:       NewRecvBuf(BUFFER_CAPACITY, remoteInitSeqNum),
+		earlyArrivalQ: PriorityQueue{},
+		recvChan:      make(chan *proto.TCPPacket, 1),
+		timeWaitReset: make(chan bool),
+
+		retransTimer: time.NewTimer(MIN_RTO),
+		rto:          1000, // before a RTT is measured, set RTO to 1 second = 1000 ms
+		firstRTT:     true,
+		inflightQ:    deque.New[*packetMetadata](),
 	}
 	conn.sndNxt.Store(iss)
 	conn.sndUna.Store(iss)
@@ -52,17 +46,22 @@ func (conn *VTCPConn) VClose() error {
 }
 
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
-	conn.stateMu.RLock()
-	if conn.state == CLOSE_WAIT {
-		conn.stateMu.RUnlock()
-		return 0, io.EOF
+	readBuff := conn.recvBuf
+	curState := conn.getState()
+	if curState == CLOSE_WAIT || curState == LAST_ACK {
+		if readBuff.WindowSize() == 0 {
+			return 0, io.EOF
+		}
+		// consume the bytes sent before FIN
+		bytesRead, err := readBuff.Read(buf)
+		if err != nil {
+			return 0, err
+		}
+		return int(bytesRead), io.EOF
 	}
-	if conn.state == FIN_WAIT_2 || conn.state == FIN_WAIT_1 || conn.state == CLOSING {
-		conn.stateMu.RUnlock()
+	if curState == FIN_WAIT_2 || curState == FIN_WAIT_1 || curState == CLOSING {
 		return 0, fmt.Errorf("operation not permitted")
 	}
-	conn.stateMu.RUnlock()
-	readBuff := conn.recvBuf
 	bytesRead, err := readBuff.Read(buf) // this will block if nothing to read in the buffer
 	if err != nil {
 		return 0, err
@@ -74,12 +73,10 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	bytesWritten := 0
 	for bytesWritten < len(data) {
-		conn.stateMu.RLock()
-		if conn.state == FIN_WAIT_1 || conn.state == FIN_WAIT_2 || conn.state == CLOSING || conn.state == TIME_WAIT {
-			conn.stateMu.RUnlock()
+		curState := conn.getState()
+		if curState == FIN_WAIT_1 || curState == FIN_WAIT_2 || curState == CLOSING || curState == TIME_WAIT {
 			return bytesWritten, errors.New("trying to write to a closing connection")
 		}
-		conn.stateMu.RUnlock()
 		w := conn.writeToSendBuf(data[bytesWritten:])
 		bytesWritten += w
 	}
@@ -88,29 +85,103 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 
 /************************************ Private funcs ***********************************/
 
+func (conn *VTCPConn) getState() State {
+	conn.stateMu.RLock()
+	s := conn.state
+	conn.stateMu.RUnlock()
+	return s
+}
+
+func (conn *VTCPConn) setState(state State) {
+	conn.stateMu.Lock()
+	conn.state = state
+	conn.stateMu.Unlock()
+}
+
+// To handle connection handshake & possible retransmissions
+func (conn *VTCPConn) doHandshakes(attempt int, isActive bool) (succeed bool) {
+	if attempt == MAX_RETRANSMISSIONS+1 {
+		return false
+	}
+	fmt.Printf("Handshake attempt %d\n", attempt)
+	if isActive {
+		if _, err := conn.sendCTL(conn.iss, 0, header.TCPFlagSyn); err != nil {
+			return false
+		}
+	} else {
+		if _, err := conn.sendCTL(conn.iss, conn.expectedSeqNum.Load(), header.TCPFlagSyn|header.TCPFlagAck); err != nil {
+			return false
+		}
+	}
+
+	timer := time.NewTimer(time.Duration((attempt + 1) * int(time.Second)))
+	for {
+		select {
+		case <-timer.C:
+			conn.rto = 3000 // reinit RTO to 3s if handshake ever times out
+			return conn.doHandshakes(attempt+1, isActive)
+		case segment := <-conn.recvChan:
+			if !isActive && segment.IsSyn() {
+				// Deviation from RFC 9293:
+				// Instead of checking SEQ num, we handle SYN first.
+				// All segment that can reach here have the same addr &
+				// port, thus we just reuse the conn for convenience,
+				// with remote-related states renewed
+				conn.irs = segment.TcpHeader.SeqNum
+				conn.expectedSeqNum.Store(segment.TcpHeader.SeqNum + 1)
+				conn.recvBuf = NewRecvBuf(BUFFER_CAPACITY, segment.TcpHeader.SeqNum)
+				return conn.doHandshakes(0, false)
+			}
+
+			// Handshake packet sent successfully
+			conn.sndNxt.Add(1)
+			conn.stateMachine(segment)
+			return true
+		}
+	}
+}
+
 func (conn *VTCPConn) run() {
+	go conn.handleRTO()
 	for {
 		segment := <-conn.recvChan
 		conn.stateMachine(segment)
 	}
 }
 
-// Send out new data in the send buffer
+// A wrapper around tcpstack.send() for packet containing data.
+// Use conn.sendCTL() instead for packet without data
+func (conn *VTCPConn) send(packet *proto.TCPPacket) error {
+	err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+	conn.resetRetransTimer(false)
+	return err
+}
+
+// Send CTL Packet
+func (conn *VTCPConn) sendCTL(seq uint32, ack uint32, flag uint8) (*proto.TCPPacket, error) {
+	packet := proto.NewTCPacket(conn.LocalPort, conn.RemotePort, seq, ack, flag, make([]byte, 0), uint16(conn.windowSize.Load()))
+	err := send(conn.t, packet, conn.LocalAddr, conn.RemoteAddr)
+	if err != nil {
+		return nil, err
+	}
+	return packet, nil
+}
+
+// Continuously send out new data in the send buffer
 func (conn *VTCPConn) sendBufferedData() {
 	b := conn.sendBuf
 	for {
 		// wait until there's new data to send
-		conn.mu.RLock()
+		conn.mu.Lock()
 		for conn.numBytesNotSent() == 0 {
-			conn.mu.RUnlock()
+			conn.mu.Unlock()
 			<-b.hasUnsentC
-			conn.mu.RLock()
+			conn.mu.Lock()
 		}
 		b.hasUnsentC = make(chan struct{}, b.capacity)
-		conn.mu.RUnlock()
-		conn.mu.RLock()
+		conn.mu.Unlock()
+
 		if conn.sndWnd.Load() == 0 { // zero-window probing
-			conn.mu.RUnlock()
 			oldUna := conn.sndUna.Load() // una changes -> this zwp packet has been processed
 			oldNxt := conn.sndNxt.Load()
 			newNxt := oldNxt + 1
@@ -124,7 +195,7 @@ func (conn *VTCPConn) sendBufferedData() {
 				header.TCPFlagAck, []byte{byteToSend}, uint16(conn.windowSize.Load()))
 
 			// start probing
-			interval := float64(1) // TODO: should be RTO
+			interval := float64(2)
 			timeout := time.NewTimer(time.Duration(interval) * time.Second)
 			<-timeout.C
 			conn.mu.RLock()
@@ -132,34 +203,33 @@ func (conn *VTCPConn) sendBufferedData() {
 				conn.mu.RUnlock()
 				err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
 				if err != nil {
-					logger.Println(err)
+					logger.Error(err.Error())
 					return
 				}
 				conn.sndNxt.Store(newNxt)
-				logger.Println("Sent zwp packet with byte: ", string(byteToSend))
+				logger.Debug("Sent zwp packet", "byte", string(byteToSend))
 
-				interval *= 1.3 // TODO: determine the factor
 				timeout.Reset(time.Duration(interval) * time.Second)
 				<-timeout.C
+				conn.mu.RLock()
 			}
-		} else {
 			conn.mu.RUnlock()
-			logger.Println("try sending data...")
+		} else {
 			numBytes, bytesToSend := conn.bytesNotSent(proto.MSS)
 			if numBytes == 0 {
+				logger.Debug("Window is not zero, but no sendable bytes")
 				continue
 			}
 			packet := proto.NewTCPacket(conn.TCPEndpointID.LocalPort, conn.TCPEndpointID.RemotePort,
 				conn.sndNxt.Load(), conn.expectedSeqNum.Load(),
 				header.TCPFlagAck, bytesToSend, uint16(conn.windowSize.Load()))
-			err := send(conn.t, packet, conn.TCPEndpointID.LocalAddr, conn.TCPEndpointID.RemoteAddr)
+			err := conn.send(packet)
 			if err != nil {
-				logger.Println(err)
+				logger.Error(err.Error())
 				return
 			}
-			// logger.Println("Sent packet with bytes: ", string(bytesToSend))
-			// conn.inflightQ.PushBack(packet)
-			// update seq number
+			conn.inflightQ.PushBack(&packetMetadata{length: uint32(numBytes), packet: packet, timeSent: time.Now()}) // no need to lock the queue?
+			logger.Debug("Pushed onto the queue", "SEQ", packet.TcpHeader.SeqNum, "len", numBytes)
 			conn.sndNxt.Add(uint32(numBytes))
 		}
 	}
